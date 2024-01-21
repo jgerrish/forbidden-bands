@@ -1,6 +1,6 @@
 [package]
 name = "forbidden-bands"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Joshua Gerrish <jgerrish@gmail.com>"]
 description = "8-bit string handling library"

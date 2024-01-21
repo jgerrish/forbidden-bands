@@ -258,7 +258,7 @@ mod tests {
         let config_result = load_config();
         #[cfg(feature = "external-json")]
         let config_result = {
-            let config_fn = String::from("/home/josh/src/rust/forbidden-bands/data/config.json");
+            let config_fn = String::from("data/config.json");
             load_config_from_file(&config_fn)
         };
         let config: Config = match config_result {
