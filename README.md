@@ -16,6 +16,12 @@ filesystems on newer systems.  But it can be used for other projects.
 Currently it supports fixed-length PETSCII strings.  PETSCII is the
 character set used on early Commodore Business Machines systems.
 
+# Examples
+
+To convert a PETSCII string to a Unicode string on the command line:
+
+echo -n -e "\x0eABCD\x8e" | cargo run --example petscii_to_unicode
+
 # Contributing
 
 Other 8-bit string support is welcome.  Some other string types may be

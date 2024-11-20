@@ -3,24 +3,19 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use std::process::exit;
-
-use forbidden_bands::{load_config_from_file, petscii::PetsciiString, Config, CONFIG};
+use forbidden_bands::{petscii::PetsciiString, Config, Configuration};
 
 fn main() {
     let config_fn = String::from("data/config.json");
-    let config_result = load_config_from_file(&config_fn);
-    let config: Config = match config_result {
-        Ok(c) => c,
-        Err(e) => {
-            println!("Error loading config: {:?}", e);
-            exit(-1);
-        }
-    };
+    let config = Config::load_from_file(&config_fn).expect("Error loading config file");
 
     // Test config
     let key: String = 84.to_string();
-    let res = config.petscii.character_set_map.get(&key);
+    let res = config
+        .petscii
+        .character_set_map
+        .c64_petscii_unshifted_codes_to_screen_codes
+        .get(&key);
     println!("res: {:?}", res);
 
     let ps =
@@ -29,29 +24,16 @@ fn main() {
     println!("debugging PETSCII string: {:?}", ps);
     println!("printing  PETSCII string: {}", ps);
 
-    let s = String::try_from(ps);
+    let s = String::from(ps);
 
     println!("PETSCII string as String string: {:?}", s);
-
-    // This should be called at a higher level than when creating
-    // strings usually.  Possibly only once at library
-    // initialization.
-    {
-        let mut lock_res = CONFIG
-            .write()
-            .expect("Should be able to acquire config lock");
-        *lock_res = Some(config);
-    }
-
-    let binding = CONFIG.read().expect("Should be able to get reader lock");
-    let config = binding.as_ref().unwrap();
 
     let ps_shifted = PetsciiString::new_with_config(3, [0x41, 0x42, 0x43], &config.petscii);
 
     println!("debugging PETSCII string: {:?}", ps_shifted);
     println!("printing  PETSCII string: {}", ps_shifted);
 
-    let s = String::try_from(ps_shifted);
+    let s = String::from(ps_shifted);
 
     println!("PETSCII string as String string: {:?}", s);
 
@@ -64,7 +46,7 @@ fn main() {
     );
     println!("printing  PETSCII string with unmapped character: {}", ps2);
 
-    let s = String::try_from(ps2);
+    let s = String::from(ps2);
 
     println!(
         "PETSCII string as String string with unmapped character: {:?}",
