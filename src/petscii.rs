@@ -109,6 +109,9 @@ pub struct PetsciiConfig {
     /// C64 screen codes set 2 to Unicode codes
     pub c64_screen_codes_set_2_to_unicode_codes: Map<String, Value>,
 
+    /// C64 screen codes set 3 (virtual table) to Unicode codes
+    pub c64_screen_codes_set_3_to_unicode_codes: Map<String, Value>,
+
     // Maps from Unicode to PETSCII
     /// Map from Unicode codes to C64 screen codes
     pub unicode_codes_to_c64_screen_codes: Map<String, Value>,
@@ -248,19 +251,7 @@ impl<'a, const L: usize> Debug for PetsciiString<'a, L> {
 
 impl<'a, const L: usize> Display for PetsciiString<'a, L> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let iter = (*self)
-            .into_iter()
-            //	    .map(|b| b as char)
-            .filter_map(|b| {
-                if !self.strip_shifted_space || (b != 0xA0) {
-                    Some(b as char)
-                } else {
-                    None
-                }
-            });
-
-        let s = String::from_iter(iter);
-        write!(f, "{}", s)
+        write!(f, "{}", String::from(self))
     }
 }
 
@@ -487,9 +478,38 @@ impl<'a, const L: usize> From<PetsciiString<'a, L>> for String {
     /// assert_eq!(s.pop().unwrap(), 'B');
     /// assert_eq!(s.pop().unwrap(), 'A');
     /// ```
+    fn from(s: PetsciiString<L>) -> String {
+        String::from(&s)
+    }
+}
+
+impl<'a, const L: usize> From<&PetsciiString<'a, L>> for String {
+    /// Create a String from a reference to a PetsciiString
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forbidden_bands::{
+    ///     petscii::{PetsciiConfig, PetsciiString},
+    ///     Config,
+    ///     Configuration,
+    /// };
+    ///
+    /// let config = PetsciiConfig::load().expect("Error loading config file");
+    ///
+    /// let ps = PetsciiString::new_with_config(6, [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f], &config.petscii);
+    /// let mut s: String = String::from(&ps);
+    ///
+    /// assert_eq!(s.pop().unwrap(), '←');
+    /// assert_eq!(s.pop().unwrap(), '↑');
+    /// assert_eq!(s.pop().unwrap(), '£');
+    /// assert_eq!(s.pop().unwrap(), 'C');
+    /// assert_eq!(s.pop().unwrap(), 'B');
+    /// assert_eq!(s.pop().unwrap(), 'A');
+    /// ```
     // TODO: Unicode 13 now has "Legacy Computing Sources"
     // (Unicode 13 was released around March 10, 2020).
-    fn from(s: PetsciiString<L>) -> String {
+    fn from(s: &PetsciiString<L>) -> String {
         let mut attributes = EnumSet::new();
         let mut shifted = false;
 
@@ -592,10 +612,16 @@ impl<'a, const L: usize> From<PetsciiString<'a, L>> for String {
 		    };
 
 		// Now map from screen codes to Unicode
-		let screen_codes_to_unicode = if screen_code.set == 1 {
-		    &cm.character_set_map.c64_screen_codes_set_1_to_unicode_codes
-		} else {
-		    &cm.character_set_map.c64_screen_codes_set_2_to_unicode_codes
+		let screen_codes_to_unicode = match screen_code.set {
+		    1 =>
+			&cm.character_set_map.c64_screen_codes_set_1_to_unicode_codes,
+		    2 =>
+			&cm.character_set_map.c64_screen_codes_set_2_to_unicode_codes,
+		    3 =>
+			&cm.character_set_map.c64_screen_codes_set_3_to_unicode_codes,
+		    _ => {
+			panic!("Invalid screen code set");
+		    }
 		};
 
 		let key = screen_code_value.to_string();
@@ -780,6 +806,8 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use crate::{
         petscii::{PetsciiConfig, PetsciiString, CONFIG},
         Config, Configuration,
@@ -981,6 +1009,43 @@ mod tests {
         // All six charactes are mapped to 32-bit unicode characters
         assert_eq!(s.len(), 24);
         assert_eq!(s.chars().count(), 6);
+    }
+
+    /// Test that the Display trait implementation works for
+    /// PetsciiString
+    ///
+    /// This also tests other stuff like the virtual screen code map
+    /// and PETSCII to Unicode conversion.
+    #[test]
+    fn petscii_display_works() {
+        let config_fn = String::from("data/config.json");
+        let config = Config::load_from_file(&config_fn).expect("Error loading config file");
+
+        let hello_world_data: [u8; 61] = [
+            0x0d, 0x0a, 0xb0, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
+            0x60, 0x60, 0x60, 0x60, 0xae, 0x0d, 0x0a, 0x7d, 0x20, 0x48, 0x0e, 0x45, 0x4c, 0x4c,
+            0x4f, 0x2c, 0x20, 0x57, 0x4f, 0x52, 0x4c, 0x44, 0x21, 0x20, 0x8e, 0x7d, 0x0d, 0x0a,
+            0xad, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
+            0x60, 0x60, 0xbd, 0x0d, 0x0a,
+        ];
+
+        let expected_unicode: [u32; 59] = [
+            13, 10, 9484, 129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913,
+            129913, 129913, 129913, 129913, 129913, 129913, 9488, 13, 10, 129907, 32, 72, 101, 108,
+            108, 111, 44, 32, 119, 111, 114, 108, 100, 33, 32, 129907, 13, 10, 9492, 129913,
+            129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913, 129913,
+            129913, 129913, 129913, 9496, 13, 10,
+        ];
+
+        let ps = PetsciiString::new_with_config(61, hello_world_data, &config.petscii);
+
+        let mut string_buf = String::new();
+
+        write!(string_buf, "{}", ps).unwrap();
+
+        let bytes: Vec<u32> = string_buf.chars().map(|c| u32::from(c)).collect();
+
+        assert_eq!(Vec::from(expected_unicode), bytes);
     }
 
     /// Test "shifted" PETSCII lowercase characters
