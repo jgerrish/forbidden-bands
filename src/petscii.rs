@@ -241,7 +241,7 @@ pub struct PetsciiString<'a, const L: usize> {
     pub strip_shifted_space: bool,
 }
 
-impl<'a, const L: usize> Debug for PetsciiString<'a, L> {
+impl<const L: usize> Debug for PetsciiString<'_, L> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "length: {:?}, ", self.len)?;
         write!(f, "data: {:?}, ", self.data)?;
@@ -249,7 +249,7 @@ impl<'a, const L: usize> Debug for PetsciiString<'a, L> {
     }
 }
 
-impl<'a, const L: usize> Display for PetsciiString<'a, L> {
+impl<const L: usize> Display for PetsciiString<'_, L> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{}", String::from(self))
     }
@@ -274,7 +274,7 @@ impl<'a, const L: usize> IntoIterator for PetsciiString<'a, L> {
     }
 }
 
-impl<'a, const L: usize> Iterator for IntoIter<'a, L> {
+impl<const L: usize> Iterator for IntoIter<'_, L> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.data.len.try_into().unwrap() {
@@ -287,7 +287,7 @@ impl<'a, const L: usize> Iterator for IntoIter<'a, L> {
 }
 
 impl<'a, const L: usize> From<&'a [u8]> for PetsciiString<'a, L> {
-    fn from(s: &'a [u8]) -> PetsciiString<L> {
+    fn from(s: &'a [u8]) -> PetsciiString<'a, L> {
         let mut bytes: [u8; L] = [0; L];
         if s.len() > L {
             panic!("u8 slice is too large");
@@ -454,7 +454,7 @@ impl<'a, const L: usize> From<&str> for PetsciiString<'a, L> {
     }
 }
 
-impl<'a, const L: usize> From<PetsciiString<'a, L>> for String {
+impl<const L: usize> From<PetsciiString<'_, L>> for String {
     /// Create a String from a PetsciiString
     ///
     /// # Examples
@@ -483,7 +483,7 @@ impl<'a, const L: usize> From<PetsciiString<'a, L>> for String {
     }
 }
 
-impl<'a, const L: usize> From<&PetsciiString<'a, L>> for String {
+impl<const L: usize> From<&PetsciiString<'_, L>> for String {
     /// Create a String from a reference to a PetsciiString
     ///
     /// # Examples
@@ -727,7 +727,7 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
     ///
     /// Shifted spaces are used to pad out filenames and disk namss in
     /// CBM DOS
-    pub fn from_byte_slice_strip_shifted_space(s: &'a [u8]) -> PetsciiString<L> {
+    pub fn from_byte_slice_strip_shifted_space(s: &'a [u8]) -> PetsciiString<'a, L> {
         let mut bytes: [u8; L] = [0; L];
         if s.len() > L {
             panic!("u8 slice is too large");

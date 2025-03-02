@@ -6,7 +6,7 @@
 ///
 /// Systems can be managed independently and incorporated as long as
 /// they're at the same major version level
-/// See https://semver.org/ for details
+/// See [Semantic Versioning](https://semver.org/) for details
 /// Fine-grained versioning of configuration options isn't available
 pub static CONFIG_DATA: &str = "
 {
@@ -994,9 +994,9 @@ pub static CONFIG_DATA_AS_BLOB: &[u8] = &[
 ];
 
 /// C64 character maps
-
+///
 /// This duplicates the data in the CONFIG_DATA
-
+///
 /// The configuration loading and unloading needs a refactor to be
 /// more dynamic
 /// In the meantime, this gets basic mapping from PETSCII to Unicode
