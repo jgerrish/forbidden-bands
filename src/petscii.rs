@@ -73,6 +73,8 @@ pub struct ScreenCodeValue {
 }
 
 /// Commodore 64 character attributes
+/// A character with no attributes is just a normal unshifted
+/// character
 #[derive(Debug, EnumSetType, Serialize, Deserialize)]
 #[enumset(serialize_repr = "u8", repr = "u8")]
 pub enum PetsciiCharacterAttributes {
@@ -83,7 +85,7 @@ pub enum PetsciiCharacterAttributes {
 /// The Petscii Code along with whether it's the "shifted" table
 /// The unshifted table contains uppercase and graphics characters
 /// The shifted table contains lowercase and uppercase characters.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PetsciiCodeValue {
     /// Whether the value is shifted and other attributes
     pub attributes: u8,
@@ -1231,6 +1233,62 @@ mod tests {
         assert_eq!(s, expected);
     }
 
+    /// Test various miscellaneous graphics characters from PETSCII to
+    /// Unicode
+    #[test]
+    fn test_petscii_misc_graphics_to_unicode() {
+        // Test box drawings light diagonal cross
+        // 0x76 PETSCII is 0x2573 UnicodeX
+        // 0x77 PETSCII is 0x25cb Unicode white circle
+        // 0x7e PETSCII is 0x03c0 Unicode Greek small letter pi
+        // 0xba shifted PETSCII is 0x2713 Unicode checkmark
+        let data: [u8; 6] = [0x76, 0x77, 0x7e, 0x0e, 0xba, 0x8e];
+        let config = PetsciiConfig::load().expect("Error loading config");
+        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let s: String = String::from(ps);
+        let expected = "╳○π✓";
+
+        assert_eq!(s, expected);
+
+        #[cfg(feature = "external-json")]
+        {
+            let config_fn = String::from("data/config.json");
+            let config =
+                PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
+
+            let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+            let s: String = String::from(ps);
+
+            assert_eq!(s, expected);
+        }
+
+        // Test the mapped characters.
+        // These should be handled even if they aren't explicitly in
+        // the configuration data.
+        // 192-223 is the same as 96-127
+        // 224-254 is the same as 160-190
+        // 255     is the same as 126
+        let data: [u8; 6] = [0x76, 0xd7, 0xde, 0x0e, 0xfa, 0x8e];
+
+        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let s: String = String::from(ps);
+        let expected = "╳○π✓";
+
+        assert_eq!(s, expected);
+
+        #[cfg(feature = "external-json")]
+        {
+            let config_fn = String::from("data/config.json");
+            let config =
+                PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
+
+            let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+            let s: String = String::from(ps);
+
+            assert_eq!(s, expected);
+        }
+    }
+
     #[test]
     fn into_iter_works() {
         #[cfg(not(feature = "external-json"))]
@@ -1316,5 +1374,55 @@ mod tests {
         let s: String = String::from(ps);
 
         assert_eq!(s, lowercase);
+    }
+
+    /// Test various miscellaneous graphics characters from Unicode to
+    /// PETSCII
+    #[test]
+    fn test_unicode_misc_graphics_to_petscii() {
+        // Test box drawings light diagonal cross
+        // 0x2573 Unicode is 0x76 PETSCII
+        // 0x25cb Unicode is white circle, 0x77 PETSCII
+        // 0x03c0 Unicode is Greek small letter pi, 0x7e PETSCII
+        //
+        // The petscii.pdf document by Aivosto Oy at www.aivosto.com
+        // incorrectly swaps the Unicode block character for the
+        // unshifted pi character at 0x7e PETSCII on page 3.
+        //
+        // Otherwise it is another great resource for understanding
+        // Commodore character sets and has an intuitive informtaion
+        // design that nicely complements the Commodore Reference
+        // guides.
+        let graphics_characters = "╳○π✓";
+        let s: String = String::from(graphics_characters);
+
+        let expected: [u8; 6] = [0x76, 0x77, 0x7e, 0x0e, 0xba, 0x8e];
+
+        let config = PetsciiConfig::load().expect("Error loading config");
+
+        let ps = PetsciiString::<6>::from_str_with_config(&s, &config.petscii);
+
+        assert_eq!(ps.len(), 6);
+        assert_eq!(ps.data, expected);
+
+        let s: String = String::from(ps);
+
+        assert_eq!(s, graphics_characters);
+
+        #[cfg(feature = "external-json")]
+        {
+            let config_fn = String::from("data/config.json");
+            let config =
+                PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
+
+            let ps = PetsciiString::<6>::from_str_with_config(&s, &config.petscii);
+
+            assert_eq!(ps.len(), 6);
+            assert_eq!(ps.data, expected);
+
+            let s: String = String::from(ps);
+
+            assert_eq!(s, graphics_characters);
+        }
     }
 }

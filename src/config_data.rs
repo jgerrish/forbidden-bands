@@ -8,6 +8,25 @@
 /// they're at the same major version level
 /// See [Semantic Versioning](https://semver.org/) for details
 /// Fine-grained versioning of configuration options isn't available
+///
+/// For the PETSCII configuration, the following conventions apply
+/// when mapping integers to set numbers and unshifted/shifted states:
+///
+/// In the screen_codes_set_?_to_petscii_codes maps, the first integer
+/// in the value indicates whether the PETSCII character is from the
+/// shifted or unshifted set.  0 indicates unshifted, 1 indicates
+/// shifted.
+///
+/// In the c64_petscii_*shifted_codes_to_screen_codes maps, the first
+/// integer in the value indicates which screen code set to go into.
+/// 1 is screen code set 1, 2 is screen code set 2, and 3 is a virtual
+/// screen code set for control characters and other special
+/// characters.
+///
+/// In general for the PETSCII maps, 0 and 1 are used for unshifted
+/// and shifted in the PETSCII character sets.  1, 2 and 3 are used
+/// for the different screen code sets.
+///
 pub static CONFIG_DATA: &str = "
 {
     \"version\": \"0.2.0\",
@@ -755,6 +774,7 @@ pub static CONFIG_DATA: &str = "
 	    \"223\": 129959,
 	    \"233\": 129961,
 	    \"105\": 129962,
+            \"122\": 10003,
 	    \"250\": 129963
 	  },
 	  \"c64_screen_codes_set_3_to_unicode_codes\":
@@ -1292,7 +1312,8 @@ pub static C64_PETSCII_MAP: &str = "
     \"23\": [1, 87],
     \"24\": [1, 88],
     \"25\": [1, 89],
-    \"26\": [1, 90]
+    \"26\": [1, 90],
+    \"122\": [1, 186]
   },
 
   \"c64_screen_codes_set_3_to_petscii_codes\":
@@ -1558,7 +1579,9 @@ pub static C64_PETSCII_MAP: &str = "
     \"60\": [1, 60],
     \"61\": [1, 61],
     \"62\": [1, 62],
-    \"63\": [1, 63]
+    \"63\": [1, 63],
+    \"186\": [2, 122],
+    \"250\": [2, 122]
   },
 
   \"c64_screen_codes_set_1_to_unicode_codes\":
@@ -1656,7 +1679,7 @@ pub static C64_PETSCII_MAP: &str = "
      \"90\": 9830,
      \"91\": 9532,
      \"93\": 129907,
-     \"94\": 9618,
+     \"94\": 960,
      \"96\": 32,
      \"97\": 9612,
      \"98\": 9604,
@@ -1739,6 +1762,7 @@ pub static C64_PETSCII_MAP: &str = "
     \"26\": 122,
     \"94\": 129957,
     \"95\": 129960,
+    \"122\": 10003,
     \"222\": 129958,
     \"223\": 129959,
     \"233\": 129961,
@@ -1841,6 +1865,7 @@ pub static C64_PETSCII_MAP: &str = "
     \"121\": [2, 25],
     \"122\": [2, 26],
     \"163\": [1, 28],
+    \"960\": [1, 94],
     \"8592\": [1, 31],
     \"8593\": [1, 30],
     \"9484\": [1, 112],
@@ -1884,6 +1909,7 @@ pub static C64_PETSCII_MAP: &str = "
     \"9829\": [1, 83],
     \"9830\": [1, 90],
     \"9831\": [1, 216],
+    \"10003\": [2, 122],
     \"129904\": [1, 84],
     \"129905\": [1, 71],
     \"129906\": [1, 66],
