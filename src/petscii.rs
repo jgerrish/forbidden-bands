@@ -149,12 +149,8 @@ impl Configuration for PetsciiConfig {
             let binding = CONFIG.read().expect("Should be able to get reader lock");
 
             let test = binding.as_ref();
-            // This pattern has a code smell
-            // I don't have a good RAII replacement for it.
-            // I'm rust.try_once_into_and_or_expect_better_ergonomics_from_compiler_not_speed(|e| { yoda_is_in_lispland(e) });
-            if test.is_some() {
-                let petscii_config = test.expect("Should be set at this point");
 
+            if let Some(petscii_config) = test {
                 return Ok(crate::Config {
                     version: crate_config.version,
                     petscii: crate::SystemConfig {
