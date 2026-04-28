@@ -2,11 +2,12 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use forbidden_bands::{petscii::PetsciiString, Config, Configuration};
+use forbidden_bands::petscii::{PetsciiConfig, PetsciiString};
 
 fn main() {
     let config_fn = String::from("data/config.json");
-    let config = Config::load_from_file(&config_fn).expect("Error loading config file");
+    let petscii_config =
+        PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
 
     let hello_world_data: [u8; 61] = [
         0x0d, 0x0a, 0xb0, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
@@ -16,7 +17,7 @@ fn main() {
         0x0a,
     ];
 
-    let ps = PetsciiString::new_with_config(61, hello_world_data, &config.petscii);
+    let ps = PetsciiString::new_with_config(61, hello_world_data, &petscii_config);
 
     println!("debugging PETSCII string: {:?}", ps);
 

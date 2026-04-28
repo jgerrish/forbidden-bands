@@ -16,6 +16,15 @@ pub struct Error {
     kind: ErrorKind,
 }
 
+impl Error {
+    /// Create a new Error with a String message
+    pub fn new_with_message(msg: String) -> Self {
+        Error {
+            kind: ErrorKind::Message(msg),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match &self.kind {

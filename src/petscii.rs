@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 // #[cfg(feature = "json")]
 use serde_json::{Map, Value};
 
-use crate::{config_data, Configuration, SystemConfig};
+use crate::Configuration;
 
 /// A Commodore screen code value and the screen set it is in
 ///
@@ -95,7 +95,7 @@ pub struct PetsciiCodeValue {
 
 /// Configuration data including character maps for the PETSCII crate
 // #[cfg(feature = "json")]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PetsciiConfig {
     /// Version of the PETSCII config
     pub version: String,
@@ -140,10 +140,11 @@ pub struct PetsciiConfig {
 pub static CONFIG: RwLock<Option<PetsciiConfig>> = RwLock::new(None);
 
 /// Load the configuration data from the PETSCII configuration string
-impl Configuration for PetsciiConfig {
-    fn load() -> std::result::Result<crate::Config, crate::error::Error> {
-        let crate_config = crate::Config::load()?;
-
+// impl Configuration for PetsciiConfig {
+impl PetsciiConfig {
+    /// Load the configuration data from the default configuration
+    /// string
+    pub fn load() -> std::result::Result<PetsciiConfig, crate::error::Error> {
         // First see if the configuration is already loaded
         {
             let binding = CONFIG.read().expect("Should be able to get reader lock");
@@ -151,20 +152,23 @@ impl Configuration for PetsciiConfig {
             let test = binding.as_ref();
 
             if let Some(petscii_config) = test {
-                return Ok(crate::Config {
-                    version: crate_config.version,
-                    petscii: crate::SystemConfig {
-                        version: crate_config.petscii.version,
-                        character_set_map: petscii_config.clone(),
-                    },
-                });
+                return Ok(petscii_config.clone());
             }
         }
 
-        // If the configuration is not loaded, load it and save it
-        let json_str = config_data::C64_PETSCII_MAP;
-        let petscii_config: PetsciiConfig =
-            serde_json::from_str(json_str).expect("Couldn't load embedded config");
+        // Config was not already loaded
+        let crate_config = crate::Config::load()?;
+        if !crate_config.systems.contains_key("petscii") {
+            return Err(crate::error::Error::new_with_message(String::from(
+                "no key for PETSCII system in config",
+            )));
+        }
+        let petscii = crate_config
+            .systems
+            .get("petscii")
+            .expect("Should find PETSCII system");
+        let char_set_map = &petscii.character_set_map;
+        let petscii_config: PetsciiConfig = serde_json::from_value(char_set_map.clone())?;
 
         {
             let mut lock_res = CONFIG
@@ -173,27 +177,30 @@ impl Configuration for PetsciiConfig {
             *lock_res = Some(petscii_config.clone());
         }
 
-        Ok(crate::Config {
-            version: crate_config.version,
-            petscii: crate::SystemConfig {
-                version: crate_config.petscii.version,
-                character_set_map: petscii_config.clone(),
-            },
-        })
+        Ok(petscii_config)
     }
 
-    fn load_from_file(filename: &str) -> std::result::Result<crate::Config, crate::error::Error> {
-        // let path = Path::new(filename);
-        // let file = File::open(path)?;
-        // let reader = BufReader::new(file);
-
+    /// Load configuration from a file
+    pub fn load_from_file(
+        filename: &str,
+    ) -> std::result::Result<PetsciiConfig, crate::error::Error> {
         // This assumes the root crate knows about this crates config
         // This is a bad design, and should be fixed in future versions
         let crate_config = crate::Config::load_from_file(filename)?;
 
-        // let json: Config = serde_json::from_reader(reader)?;
+        if !crate_config.systems.contains_key("petscii") {
+            return Err(crate::error::Error::new_with_message(String::from(
+                "no key for PETSCII system in config",
+            )));
+        }
+        let petscii = crate_config
+            .systems
+            .get("petscii")
+            .expect("Should find petscii system");
+        let char_set_map = &petscii.character_set_map;
+        let petscii_config: PetsciiConfig = serde_json::from_value(char_set_map.clone())?;
 
-        Ok(crate_config)
+        Ok(petscii_config)
     }
 }
 
@@ -230,7 +237,7 @@ pub struct PetsciiString<'a, const L: usize> {
     pub data: [u8; L],
 
     /// The character map for this string
-    pub character_map: Option<&'a SystemConfig>,
+    pub character_map: Option<&'a PetsciiConfig>,
 
     /// strip "shifted space" (0xA0) characters in the display of this
     /// PetsciiString.
@@ -330,22 +337,10 @@ fn unicode_to_petscii_bytes(s: &str) -> Vec<u8> {
 
     let config = PetsciiConfig::load().expect("Error loading config");
 
-    let uc_map = config
-        .petscii
-        .character_set_map
-        .unicode_codes_to_c64_screen_codes;
-    let sc1_map = config
-        .petscii
-        .character_set_map
-        .c64_screen_codes_set_1_to_petscii_codes;
-    let sc2_map = config
-        .petscii
-        .character_set_map
-        .c64_screen_codes_set_2_to_petscii_codes;
-    let sc3_map = config
-        .petscii
-        .character_set_map
-        .c64_screen_codes_set_3_to_petscii_codes;
+    let uc_map = &config.unicode_codes_to_c64_screen_codes;
+    let sc1_map = &config.c64_screen_codes_set_1_to_petscii_codes;
+    let sc2_map = &config.c64_screen_codes_set_2_to_petscii_codes;
+    let sc3_map = &config.c64_screen_codes_set_3_to_petscii_codes;
 
     attributes.insert(CharacterAttributes::Normal);
 
@@ -466,7 +461,7 @@ impl<const L: usize> From<PetsciiString<'_, L>> for String {
     ///
     /// let config = PetsciiConfig::load().expect("Error loading config file");
     ///
-    /// let ps = PetsciiString::new_with_config(6, [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f], &config.petscii);
+    /// let ps = PetsciiString::new_with_config(6, [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f], &config);
     /// let mut s: String = String::from(ps);
     ///
     /// assert_eq!(s.pop().unwrap(), '←');
@@ -495,7 +490,7 @@ impl<const L: usize> From<&PetsciiString<'_, L>> for String {
     ///
     /// let config = PetsciiConfig::load().expect("Error loading config file");
     ///
-    /// let ps = PetsciiString::new_with_config(6, [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f], &config.petscii);
+    /// let ps = PetsciiString::new_with_config(6, [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f], &config);
     /// let mut s: String = String::from(&ps);
     ///
     /// assert_eq!(s.pop().unwrap(), '←');
@@ -574,9 +569,9 @@ impl<const L: usize> From<&PetsciiString<'_, L>> for String {
 
 		// Map from PETSCII to screen codes
 		let petscii_to_screen_codes = if !shifted {
-		    &cm.character_set_map.c64_petscii_unshifted_codes_to_screen_codes
+		    &cm.c64_petscii_unshifted_codes_to_screen_codes
 		} else {
-		    &cm.character_set_map.c64_petscii_shifted_codes_to_screen_codes
+		    &cm.c64_petscii_shifted_codes_to_screen_codes
 		};
 		let key = c.to_string();
 
@@ -612,11 +607,11 @@ impl<const L: usize> From<&PetsciiString<'_, L>> for String {
 		// Now map from screen codes to Unicode
 		let screen_codes_to_unicode = match screen_code.set {
 		    1 =>
-			&cm.character_set_map.c64_screen_codes_set_1_to_unicode_codes,
+			&cm.c64_screen_codes_set_1_to_unicode_codes,
 		    2 =>
-			&cm.character_set_map.c64_screen_codes_set_2_to_unicode_codes,
+			&cm.c64_screen_codes_set_2_to_unicode_codes,
 		    3 =>
-			&cm.character_set_map.c64_screen_codes_set_3_to_unicode_codes,
+			&cm.c64_screen_codes_set_3_to_unicode_codes,
 		    _ => {
 			panic!("Invalid screen code set");
 		    }
@@ -679,7 +674,7 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
     /// assert_eq!(ps.data[1], 0x42);
     /// assert_eq!(ps.data[2], 0x43);
     /// ```
-    pub fn new_with_config(len: u32, data: [u8; L], character_map: &'a SystemConfig) -> Self {
+    pub fn new_with_config(len: u32, data: [u8; L], character_map: &'a PetsciiConfig) -> Self {
         PetsciiString {
             len,
             data,
@@ -754,7 +749,7 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
     ///
     /// TODO: Figure this out and remove this function and the
     /// with_config functions
-    pub fn from_str_with_config(s: &str, character_map: &'a SystemConfig) -> PetsciiString<'a, L> {
+    pub fn from_str_with_config(s: &str, character_map: &'a PetsciiConfig) -> PetsciiString<'a, L> {
         let mut final_bytes: [u8; L] = [0; L];
 
         let bytes = unicode_to_petscii_bytes(s);
@@ -779,7 +774,7 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
     /// with a config
     pub fn from_byte_slice_strip_shifted_space_with_config(
         s: &'a [u8],
-        character_map: &'a SystemConfig,
+        character_map: &'a PetsciiConfig,
     ) -> PetsciiString<'a, L> {
         let mut bytes: [u8; L] = [0; L];
         if s.len() > L {
@@ -806,10 +801,7 @@ impl<'a, const L: usize> PetsciiString<'a, L> {
 mod tests {
     use std::fmt::Write;
 
-    use crate::{
-        petscii::{PetsciiConfig, PetsciiString, CONFIG},
-        Config, Configuration,
-    };
+    use crate::petscii::{PetsciiConfig, PetsciiString, CONFIG};
 
     // #[cfg(feature = "external-json")]
     // use crate::load_config_from_file;
@@ -903,11 +895,11 @@ mod tests {
 
     #[test]
     fn petscii_with_config_works() {
-        let config = PetsciiConfig::load().expect("Error loading config file");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config file");
         let ps = PetsciiString::new_with_config(
             6,
             [0x41, 0x42, 0x43, 0x5c, 0x5e, 0x5f],
-            &config.petscii,
+            &petscii_config,
         );
         let mut s: String = String::from(ps);
         assert_eq!(s.pop().unwrap(), '←');
@@ -921,13 +913,13 @@ mod tests {
     #[test]
     fn petscii_with_config_unmapped_character_works() {
         let config_result = PetsciiConfig::load();
-        let config: Config = match config_result {
+        let petscii_config: PetsciiConfig = match config_result {
             Ok(c) => c,
             Err(e) => {
                 panic!("Error loading config file: {e}");
             }
         };
-        let ps = PetsciiString::new_with_config(2, [0x41, 0xb2], &config.petscii);
+        let ps = PetsciiString::new_with_config(2, [0x41, 0xb2], &petscii_config);
         let mut s: String = String::from(ps);
         assert_eq!(s.pop().unwrap(), '┬');
         assert_eq!(s.pop().unwrap(), 'A');
@@ -986,21 +978,19 @@ mod tests {
         // strings usually.  Possibly only once at library
         // initialization.
         {
-            let mut lock_res = crate::CONFIG
+            let mut lock_res = CONFIG
                 .write()
                 .expect("Should be able to acquire config lock");
             *lock_res = Some(config);
         }
 
-        let binding = crate::CONFIG
-            .read()
-            .expect("Should be able to get reader lock");
-        let config = binding.as_ref().unwrap();
+        let binding = CONFIG.read().expect("Should be able to get reader lock");
+        let petscii_config = binding.as_ref().unwrap();
 
         let ps = PetsciiString::new_with_config(
             6,
             [0x74, 0x67, 0x62, 0x7d, 0x68, 0x79],
-            &config.petscii,
+            &petscii_config,
         );
         let s: String = String::from(ps);
 
@@ -1017,7 +1007,8 @@ mod tests {
     #[test]
     fn petscii_display_works() {
         let config_fn = String::from("data/config.json");
-        let config = Config::load_from_file(&config_fn).expect("Error loading config file");
+        let petscii_config =
+            PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
 
         let hello_world_data: [u8; 61] = [
             0x0d, 0x0a, 0xb0, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
@@ -1035,13 +1026,13 @@ mod tests {
             129913, 129913, 129913, 9496, 13, 10,
         ];
 
-        let ps = PetsciiString::new_with_config(61, hello_world_data, &config.petscii);
+        let ps = PetsciiString::new_with_config(61, hello_world_data, &petscii_config);
 
         let mut string_buf = String::new();
 
         write!(string_buf, "{}", ps).unwrap();
 
-        let bytes: Vec<u32> = string_buf.chars().map(|c| u32::from(c)).collect();
+        let bytes: Vec<u32> = string_buf.chars().map(u32::from).collect();
 
         assert_eq!(Vec::from(expected_unicode), bytes);
     }
@@ -1067,12 +1058,12 @@ mod tests {
             0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x8e,
         ];
 
-        let config = {
+        let petscii_config = {
             let config_fn = String::from("data/config.json");
             PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file")
         };
 
-        let ps = PetsciiString::new_with_config(28, data, &config.petscii);
+        let ps = PetsciiString::new_with_config(28, data, &petscii_config);
 
         assert_eq!(ps.len(), 28);
 
@@ -1101,15 +1092,15 @@ mod tests {
         // normal Unicode Block Elements code tables as 0x2583
         let data: [u8; 0x01] = [0xB9];
 
-        let config = {
+        let petscii_config = {
             let config_fn = String::from("data/config.json");
             PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file")
         };
 
-        let ps = PetsciiString::new_with_config(1, data, &config.petscii);
+        let ps = PetsciiString::new_with_config(1, data, &petscii_config);
 
         let s: String = String::from(ps);
-        let c = s.chars().nth(0).unwrap();
+        let c = s.chars().next().unwrap();
         let expected: char = char::from_u32(0x2583).unwrap();
 
         assert_eq!(c, expected);
@@ -1169,9 +1160,9 @@ mod tests {
         // 0x7a is a black diamond
         let data: [u8; 4] = [0x61, 0x73, 0x78, 0x7a];
 
-        let config = PetsciiConfig::load().expect("Error loading config file");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config file");
 
-        let ps = PetsciiString::new_with_config(4, data, &config.petscii);
+        let ps = PetsciiString::new_with_config(4, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "♠♥♣♦";
 
@@ -1187,8 +1178,8 @@ mod tests {
         // 0xda is a black diamond
         let data: [u8; 4] = [0xc1, 0xd3, 0xd8, 0xda];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
-        let ps = PetsciiString::new_with_config(4, data, &config.petscii);
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
+        let ps = PetsciiString::new_with_config(4, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "♠♥♣♦";
 
@@ -1204,8 +1195,8 @@ mod tests {
         // 0x7a in reversed video is a white diamond
         let data: [u8; 6] = [0x12, 0x61, 0x73, 0x78, 0x7a, 0x92];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
-        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
+        let ps = PetsciiString::new_with_config(6, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "♤♡♧♢";
 
@@ -1221,8 +1212,8 @@ mod tests {
         // 0xda in reversed video is a white diamond
         let data: [u8; 6] = [0x12, 0xc1, 0xd3, 0xd8, 0xda, 0x92];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
-        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
+        let ps = PetsciiString::new_with_config(6, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "♤♡♧♢";
 
@@ -1239,8 +1230,8 @@ mod tests {
         // 0x7e PETSCII is 0x03c0 Unicode Greek small letter pi
         // 0xba shifted PETSCII is 0x2713 Unicode checkmark
         let data: [u8; 6] = [0x76, 0x77, 0x7e, 0x0e, 0xba, 0x8e];
-        let config = PetsciiConfig::load().expect("Error loading config");
-        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
+        let ps = PetsciiString::new_with_config(6, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "╳○π✓";
 
@@ -1249,10 +1240,10 @@ mod tests {
         #[cfg(feature = "external-json")]
         {
             let config_fn = String::from("data/config.json");
-            let config =
+            let petscii_config =
                 PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
 
-            let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+            let ps = PetsciiString::new_with_config(6, data, &petscii_config);
             let s: String = String::from(ps);
 
             assert_eq!(s, expected);
@@ -1266,7 +1257,7 @@ mod tests {
         // 255     is the same as 126
         let data: [u8; 6] = [0x76, 0xd7, 0xde, 0x0e, 0xfa, 0x8e];
 
-        let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+        let ps = PetsciiString::new_with_config(6, data, &petscii_config);
         let s: String = String::from(ps);
         let expected = "╳○π✓";
 
@@ -1275,10 +1266,10 @@ mod tests {
         #[cfg(feature = "external-json")]
         {
             let config_fn = String::from("data/config.json");
-            let config =
+            let petscii_config =
                 PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
 
-            let ps = PetsciiString::new_with_config(6, data, &config.petscii);
+            let ps = PetsciiString::new_with_config(6, data, &petscii_config);
             let s: String = String::from(ps);
 
             assert_eq!(s, expected);
@@ -1288,14 +1279,14 @@ mod tests {
     #[test]
     fn into_iter_works() {
         #[cfg(not(feature = "external-json"))]
-        let config = PetsciiConfig::load().expect("Error loading config");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
         #[cfg(feature = "external-json")]
-        let config = {
+        let petscii_config = {
             let config_fn = String::from("data/config.json");
             PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file")
         };
 
-        let ps = PetsciiString::new_with_config(3, [0x41, 0x42, 0x43], &config.petscii);
+        let ps = PetsciiString::new_with_config(3, [0x41, 0x42, 0x43], &petscii_config);
 
         let mut iter = ps.into_iter();
 
@@ -1318,9 +1309,9 @@ mod tests {
             0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a,
         ];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
 
-        let ps = PetsciiString::<26>::from_str_with_config(&s, &config.petscii);
+        let ps = PetsciiString::<26>::from_str_with_config(&s, &petscii_config);
 
         assert_eq!(ps.len(), 26);
         assert_eq!(ps.data, expected);
@@ -1360,9 +1351,9 @@ mod tests {
             0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x8e,
         ];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
 
-        let ps = PetsciiString::<28>::from_str_with_config(&s, &config.petscii);
+        let ps = PetsciiString::<28>::from_str_with_config(&s, &petscii_config);
 
         assert_eq!(ps.len(), 28);
         assert_eq!(ps.data, expected);
@@ -1394,9 +1385,9 @@ mod tests {
 
         let expected: [u8; 6] = [0x76, 0x77, 0x7e, 0x0e, 0xba, 0x8e];
 
-        let config = PetsciiConfig::load().expect("Error loading config");
+        let petscii_config = PetsciiConfig::load().expect("Error loading config");
 
-        let ps = PetsciiString::<6>::from_str_with_config(&s, &config.petscii);
+        let ps = PetsciiString::<6>::from_str_with_config(&s, &petscii_config);
 
         assert_eq!(ps.len(), 6);
         assert_eq!(ps.data, expected);
@@ -1408,10 +1399,10 @@ mod tests {
         #[cfg(feature = "external-json")]
         {
             let config_fn = String::from("data/config.json");
-            let config =
+            let petscii_config =
                 PetsciiConfig::load_from_file(&config_fn).expect("Error loading config file");
 
-            let ps = PetsciiString::<6>::from_str_with_config(&s, &config.petscii);
+            let ps = PetsciiString::<6>::from_str_with_config(&s, &petscii_config);
 
             assert_eq!(ps.len(), 6);
             assert_eq!(ps.data, expected);

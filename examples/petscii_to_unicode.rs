@@ -12,10 +12,7 @@ use std::{
     sync::RwLock,
 };
 
-use forbidden_bands::{
-    petscii::{PetsciiConfig, PetsciiString},
-    Config, Configuration,
-};
+use forbidden_bands::petscii::{PetsciiConfig, PetsciiString};
 
 /// The forbidden-bands configuration for the image-rider application
 pub static CONFIG: RwLock<Option<forbidden_bands::Config>> = RwLock::new(None);
@@ -23,7 +20,7 @@ pub static CONFIG: RwLock<Option<forbidden_bands::Config>> = RwLock::new(None);
 /// Convert a PETSCII byte sequence to Unicode
 fn main() {
     let config_result = PetsciiConfig::load();
-    let config: Config = match config_result {
+    let petscii_config: PetsciiConfig = match config_result {
         Ok(c) => c,
         Err(e) => {
             println!("Error loading config: {:?}", e);
@@ -46,7 +43,7 @@ fn main() {
     // but others might want it.
     let ps = PetsciiString::<256>::from_byte_slice_strip_shifted_space_with_config(
         input.as_slice(),
-        &config.petscii,
+        &petscii_config,
     );
 
     let s: String = ps.into();
