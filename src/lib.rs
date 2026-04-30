@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub mod config_data;
 pub mod error;
 pub mod petscii;
+pub mod zscii;
 
 /// An individual system config
 /// Contains character set mappings
