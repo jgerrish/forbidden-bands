@@ -171,7 +171,7 @@ mod tests {
                 assert_eq!(v.get(1).unwrap().as_u64().unwrap(), 103);
             }
             _ => {
-                assert!(false);
+                panic!("Should parse config value");
             }
         }
 
