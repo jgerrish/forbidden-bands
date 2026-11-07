@@ -987,11 +987,8 @@ mod tests {
         let binding = CONFIG.read().expect("Should be able to get reader lock");
         let petscii_config = binding.as_ref().unwrap();
 
-        let ps = PetsciiString::new_with_config(
-            6,
-            [0x74, 0x67, 0x62, 0x7d, 0x68, 0x79],
-            &petscii_config,
-        );
+        let ps =
+            PetsciiString::new_with_config(6, [0x74, 0x67, 0x62, 0x7d, 0x68, 0x79], petscii_config);
         let s: String = String::from(ps);
 
         // All six charactes are mapped to 32-bit unicode characters

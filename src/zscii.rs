@@ -60,9 +60,11 @@ use crate::Configuration;
 /// a certain data structure or function operates on or returns,
 /// additional documentation is included.
 #[derive(Clone, Copy, Debug)]
-pub struct ZsciiString<const L: usize> {
-    /// Version of the Z-Machine for this ZSCII string
-    pub version: u8,
+pub struct ZsciiString<'config, const L: usize> {
+    /// The configuration data for this ZSCII String
+    /// This includes things like the Z-Machine version and Unicode
+    /// table.
+    pub config: &'config ZsciiConfig,
 
     /// The length of the string
     pub len: u32,
@@ -79,6 +81,9 @@ enum Error {
 
     /// The feature is unimplemented
     Unimplemented,
+
+    /// There was no output vector to return
+    NoOutput,
 }
 
 /// Configuration data including character maps for the ZSCII crate
@@ -185,7 +190,8 @@ enum Alphabet {
     /// The third alphabet
     /// It's the numbers 0x07 to 0x1f mapped to:
     ///   \r 0 1 2 3 4 5 6 7 8 9 . , ! ? _ # ` " / \ - : ( )
-    /// Character 6 is not used, Character 7 is a carrige return / newline
+    /// Character 6 is used to switch to 10-bit mode, Character 7 is a
+    /// carriage return / newline
     A2 = 2,
 }
 
@@ -201,7 +207,7 @@ enum ShiftState {
 }
 
 /// The state of the ZSCII processor
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct State {
     /// The version of the z-machine
     pub version: u8,
@@ -215,6 +221,8 @@ struct State {
     pub ten_bit_zscii_mode: bool,
     /// The most-significant 5 bits of the ten-bit ZSCII word
     pub ten_bit_zscii_word: Option<u8>,
+    /// The output vector to write data to
+    pub output: Option<Vec<u8>>,
 }
 
 impl State {
@@ -226,7 +234,59 @@ impl State {
             shifted: ShiftState::Disabled,
             ten_bit_zscii_mode: false,
             ten_bit_zscii_word: None,
+            output: None,
         }
+    }
+
+    /// Create a new State with a given Z-Machine version and set to a
+    /// specific alphabet.
+    #[allow(dead_code)] // Ignore because this is used in tests
+    fn new_with_version_and_alphabet(version: u8, alphabet: Alphabet) -> State {
+        State {
+            version,
+            alphabet,
+            shifted: ShiftState::Disabled,
+            ten_bit_zscii_mode: false,
+            ten_bit_zscii_word: None,
+            output: None,
+        }
+    }
+
+    /// Set the output vector
+    ///
+    /// The output vector is written to if necessary when the state is
+    /// changed.
+    fn set_output(&mut self, output: Vec<u8>) {
+        self.output = Some(output);
+    }
+
+    /// Write to the output vector directly.
+    ///
+    /// This can be used by functions outside the State implementation
+    /// to write to the output vector.
+    // TODO: Refactor this.
+    // It really shouldn't be a function on State,
+    // but it works for now and it's better than it was.  Now we're
+    // driving shift character output by state transitions.
+    fn write_output(&mut self, byte: u8) {
+        if let Some(ref mut o) = self.output {
+            o.push(byte);
+        }
+    }
+
+    /// Return the output vector if there is one, otherwise return a
+    /// NoOutput Error.
+    ///
+    /// This takes the vector from the output Option, replacing it
+    /// with a None.  Any further attempts to write to the output will
+    /// fail.
+    ///
+    /// It should be used when returning from a parser function.
+    ///
+    /// Maybe we can simplify this even more by not wrapping the Vec
+    /// in a Some.
+    fn return_output(&mut self) -> Result<Option<Vec<u8>>, Error> {
+        self.output.take().map(Some).ok_or(Error::NoOutput)
     }
 
     /// Shift the alphabet in the current state up, either temporarily or
@@ -237,9 +297,29 @@ impl State {
         match shift_type {
             ShiftType::Temporary => {
                 self.shifted = ShiftState::Up;
+                if let Some(ref mut o) = self.output {
+                    match self.version {
+                        0 => {}
+                        1..=2 => {
+                            o.push(0x02);
+                        }
+                        3..=u8::MAX => {
+                            o.push(0x04);
+                        }
+                    }
+                }
             }
             ShiftType::Permanent => {
                 self.alphabet = shift_alphabet(self.alphabet, ShiftState::Up);
+                if let Some(ref mut o) = self.output {
+                    match self.version {
+                        0 => {}
+                        1..=2 => {
+                            o.push(0x04);
+                        }
+                        3..=u8::MAX => {}
+                    }
+                }
             }
         }
 
@@ -254,9 +334,29 @@ impl State {
         match shift_type {
             ShiftType::Temporary => {
                 self.shifted = ShiftState::Down;
+                if let Some(ref mut o) = self.output {
+                    match self.version {
+                        0 => {}
+                        1..=2 => {
+                            o.push(0x03);
+                        }
+                        3..=u8::MAX => {
+                            o.push(0x05);
+                        }
+                    }
+                }
             }
             ShiftType::Permanent => {
                 self.alphabet = shift_alphabet(self.alphabet, ShiftState::Down);
+                if let Some(ref mut o) = self.output {
+                    match self.version {
+                        0 => {}
+                        1..=2 => {
+                            o.push(0x05);
+                        }
+                        3..=u8::MAX => {}
+                    }
+                }
             }
         }
 
@@ -349,7 +449,7 @@ fn get_character(alphabet: &Alphabet, code: u8) -> Result<u8, Error> {
 /// The basic ASCII letters, numbers and a few symbols are available
 /// using 5-bit z-characters.  Additional characters and special
 /// sequences are encoded using ten bits.
-fn decode_ten_bit_zchar(ten_bit_zchar: u16) -> Result<Option<u8>, Error> {
+fn decode_ten_bit_zchar(config: &ZsciiConfig, ten_bit_zchar: u16) -> Result<Option<u8>, Error> {
     match ten_bit_zchar {
         0 => Ok(Some(0x00)),
         1..=7 => Ok(None),
@@ -370,7 +470,7 @@ fn decode_ten_bit_zchar(ten_bit_zchar: u16) -> Result<Option<u8>, Error> {
         133..=144 => Err(Error::Unimplemented),
         // TODO: keypad 0-9
         145..=154 => Err(Error::Unimplemented),
-        155..=251 => Err(Error::Unimplemented),
+        155..=251 => decode_unicode_table_character(config, ten_bit_zchar),
         // TODO: Implment menu click (v6)
         252 => Err(Error::Unimplemented),
         // TODO: Implment double click (v6)
@@ -380,6 +480,38 @@ fn decode_ten_bit_zchar(ten_bit_zchar: u16) -> Result<Option<u8>, Error> {
         255..=1023 => Ok(None),
         1024..=u16::MAX => Err(Error::InvalidCharacter),
     }
+}
+
+// Decode a 10-bit ZSCII character that is in the Unicode table range
+fn decode_unicode_table_character(
+    config: &ZsciiConfig,
+    ten_bit_zchar: u16,
+) -> Result<Option<u8>, Error> {
+    println!("Decoding ten-bit unicode table character");
+
+    let extra_chars_map = &config.zscii_extra_characters_to_unicode_default_table;
+
+    let key = ten_bit_zchar.to_string();
+    if !extra_chars_map.contains_key(&key) {
+        return Err(Error::InvalidCharacter);
+    }
+    let code_opt = extra_chars_map.get(&key);
+    let code = match code_opt {
+        Some(s) => s,
+        None => {
+            println!("get failed't find key: {:?}", key);
+            return Err(Error::InvalidCharacter);
+        }
+    };
+    let code_value_res = match code {
+        serde_json::Value::Number(v) => v.as_u64().unwrap() as u8,
+        _ => {
+            println!("serde_json convert ugh: {:?}", code);
+            return Err(Error::InvalidCharacter);
+        }
+    };
+
+    Ok(Some(code_value_res))
 }
 
 // Encoding functions from Unicode to ZSCII
@@ -394,7 +526,9 @@ fn encode_alphabet_a2_char(
 
     // Unicode to Alphabet A2 characters
     let unicode_to_alphabet_a2 = &config.zscii_unicode_to_alphabet_a2;
-    let mut output: Vec<u8> = Vec::new();
+    let output: Vec<u8> = Vec::new();
+
+    state.set_output(output);
 
     let res = unicode_to_alphabet_a2
         .get(&unicode_code_point)
@@ -414,29 +548,29 @@ fn encode_alphabet_a2_char(
                 match state.alphabet {
                     Alphabet::A0 => {
                         if next_char_in_a2 {
-                            output.push(0x05);
                             state.shift(ShiftState::Down, ShiftType::Permanent);
                         } else {
-                            output.push(0x03);
+                            state.shift(ShiftState::Down, ShiftType::Temporary);
                         }
                     }
                     Alphabet::A1 => {
                         if next_char_in_a2 {
-                            output.push(0x04);
                             state.shift(ShiftState::Up, ShiftType::Permanent);
                         } else {
-                            output.push(0x02);
+                            state.shift(ShiftState::Up, ShiftType::Temporary);
                         }
                     }
                     Alphabet::A2 => {}
                 }
-                output.push(r);
-                Ok(Some(output))
+                state.write_output(r);
+                state.return_output()
             }
             3..=u8::MAX => {
-                output.push(0x05);
-                output.push(r);
-                Ok(Some(output))
+                // Version 3 of the Z-Machine only have temporary shifts
+                // They are normally in A0
+                state.shift(ShiftState::Down, ShiftType::Temporary);
+                state.write_output(r);
+                state.return_output()
             }
         },
         None => Ok(None),
@@ -456,6 +590,8 @@ fn encode_char(
 
     let mut output: Vec<u8> = Vec::new();
 
+    let uc_map = &config.zscii_unicode_to_extra_characters_default_table;
+
     // We should probably explicitly list these in the match cases
     // Mixing hash lookups and matches works but seems weird
     let a2_option = encode_alphabet_a2_char(state, config, c, next_char)?;
@@ -463,6 +599,8 @@ fn encode_char(
         output = a2;
         return Ok(Some(output));
     }
+
+    state.set_output(output);
 
     let d = match unicode_code_point {
         0x00..=0x40 => Err(Error::Unimplemented),
@@ -475,8 +613,8 @@ fn encode_char(
             1..=2 => {
                 // We are already in the correct state
                 if state.alphabet == Alphabet::A1 {
-                    output.push((unicode_code_point - 0x3b) as u8);
-                    return Ok(Some(output));
+                    state.write_output((unicode_code_point - 0x3b) as u8);
+                    return state.return_output();
                 }
 
                 if let Some(next) = next_char {
@@ -486,17 +624,15 @@ fn encode_char(
                         // Use a permanent shift
                         match state.alphabet {
                             Alphabet::A0 => {
-                                output.push(0x04);
                                 state.shift(ShiftState::Up, ShiftType::Permanent);
                             }
                             Alphabet::A1 => {}
                             Alphabet::A2 => {
-                                output.push(0x05);
                                 state.shift(ShiftState::Down, ShiftType::Permanent);
                             }
                         }
-                        output.push((unicode_code_point - 0x3b) as u8);
-                        return Ok(Some(output));
+                        state.write_output((unicode_code_point - 0x3b) as u8);
+                        return state.return_output();
                     }
                 }
 
@@ -504,24 +640,24 @@ fn encode_char(
                 // temporary shift
                 match state.alphabet {
                     Alphabet::A0 => {
-                        output.push(0x02);
+                        state.shift(ShiftState::Up, ShiftType::Temporary);
                     }
                     Alphabet::A1 => {}
                     Alphabet::A2 => {
-                        output.push(0x03);
+                        state.shift(ShiftState::Down, ShiftType::Temporary);
                     }
                 }
-                output.push((unicode_code_point - 0x3b) as u8);
-                Ok(Some(output))
+                state.write_output((unicode_code_point - 0x3b) as u8);
+                state.return_output()
             }
 
             // Z-Machine Versions 3 and above don't have a permanent
             // shift character
             3..=u8::MAX => {
                 // Shift to A1
-                output.push(0x04);
-                output.push((unicode_code_point - 0x3b) as u8);
-                Ok(Some(output))
+                state.shift(ShiftState::Up, ShiftType::Temporary);
+                state.write_output((unicode_code_point - 0x3b) as u8);
+                state.return_output()
             }
         },
         0x5b..=0x60 => Err(Error::Unimplemented),
@@ -533,8 +669,8 @@ fn encode_char(
             1..=2 => {
                 // We are already in the correct state
                 if state.alphabet == Alphabet::A0 {
-                    output.push((unicode_code_point - 0x5b) as u8);
-                    return Ok(Some(output));
+                    state.write_output((unicode_code_point - 0x5b) as u8);
+                    return state.return_output();
                 }
                 if let Some(next) = next_char {
                     let next_unicode_code_point = u32::from(next);
@@ -544,14 +680,14 @@ fn encode_char(
                         match state.alphabet {
                             Alphabet::A0 => {}
                             Alphabet::A1 => {
-                                output.push(0x06);
+                                state.shift(ShiftState::Down, ShiftType::Permanent);
                             }
                             Alphabet::A2 => {
-                                output.push(0x05);
+                                state.shift(ShiftState::Up, ShiftType::Permanent);
                             }
                         }
-                        output.push((unicode_code_point - 0x5b) as u8);
-                        return Ok(Some(output));
+                        state.write_output((unicode_code_point - 0x5b) as u8);
+                        return state.return_output();
                     }
 
                     // Next character is not lowercase or doesn't exist, use a
@@ -559,23 +695,116 @@ fn encode_char(
                     match state.alphabet {
                         Alphabet::A0 => {}
                         Alphabet::A1 => {
-                            output.push(0x03);
+                            state.shift(ShiftState::Down, ShiftType::Temporary);
                         }
                         Alphabet::A2 => {
-                            output.push(0x02);
+                            state.shift(ShiftState::Up, ShiftType::Temporary);
                         }
                     }
                 }
-                output.push((unicode_code_point - 0x3b) as u8);
-                Ok(Some(output))
+                state.write_output((unicode_code_point - 0x3b) as u8);
+                state.return_output()
             }
             3..=u8::MAX => {
                 // normal state is A0
-                output.push((unicode_code_point - 0x5b) as u8);
-                return Ok(Some(output));
+                state.write_output((unicode_code_point - 0x5b) as u8);
+                state.return_output()
             }
         },
-        0x7b..=u32::MAX => Err(Error::Unimplemented),
+        0x7b..=0x9f => Err(Error::Unimplemented),
+        0xa0..=0xff => {
+            // Shift first
+            if !state.ten_bit_zscii_mode {
+                // We need to be in alphabet A2 to enable ten bit ZSCII mode
+                if state.alphabet == Alphabet::A2 {
+                    // Just switch to ten bit ZSCII mode
+                    state.write_output(0x06);
+                } else {
+                    // I know this is a state machine.  I'm reducing
+                    // the complexity and refactoring input/output
+                    // into state transitions gradually.
+                    //
+                    // We now output shift state transitions, and
+                    // we'll do ten-bit transitions next.
+                    match state.version {
+                        0 => return Err(Error::Unimplemented),
+                        // Z-Machine Versions 1 and 2 have a permanent shift
+                        // character
+                        1..=2 => {
+                            let next_char_in_a2: bool = if let Some(next) = next_char {
+                                let next_unicode_code_point = u32::from(next).to_string();
+                                uc_map.contains_key(&next_unicode_code_point)
+                            } else {
+                                false
+                            };
+                            println!("Next character is in a2");
+                            // Next character is not uppercase or doesn't exist, use a
+                            // temporary shift
+                            match state.alphabet {
+                                Alphabet::A0 => {
+                                    if next_char_in_a2 {
+                                        state.shift(ShiftState::Down, ShiftType::Permanent);
+                                    } else {
+                                        state.shift(ShiftState::Down, ShiftType::Temporary);
+                                    }
+                                }
+                                Alphabet::A1 => {
+                                    if next_char_in_a2 {
+                                        state.shift(ShiftState::Up, ShiftType::Permanent);
+                                    } else {
+                                        state.shift(ShiftState::Up, ShiftType::Temporary);
+                                    }
+                                }
+                                Alphabet::A2 => {
+                                    println!("Already in A2");
+                                }
+                            }
+                        }
+                        // Z-Machine Versions 3 and above don't have a permanent
+                        // shift character
+                        3..=u8::MAX => {
+                            // Shift to A2
+                            state.shift(ShiftState::Down, ShiftType::Temporary);
+                        }
+                    }
+                    // Maybe add specific method for changing ten-byte
+                    // state
+                    state.write_output(0x06);
+                }
+            }
+            println!("test");
+            let key = unicode_code_point.to_string();
+            println!("test2");
+            if !uc_map.contains_key(&key) {
+                println!("Couldn't find key: {:?}", key);
+                return Err(Error::InvalidCharacter);
+            }
+            let code_opt = uc_map.get(&key);
+            let code_value = match code_opt {
+                Some(s) => s,
+                None => {
+                    println!("get failed't find key: {:?}", key);
+                    return Err(Error::InvalidCharacter);
+                }
+            };
+
+            let code = match code_value {
+                serde_json::Value::Number(v) => v.as_u64().unwrap() as u32,
+                _ => {
+                    return Err(Error::InvalidCharacter);
+                }
+            };
+
+            // Top 5 bits flag:   0b1111100000
+            let top_bits = (code & 0x3e0) >> 5;
+            state.write_output(top_bits.try_into().unwrap());
+            // lower 5 bits flag: 0b0000011111
+            let lower_bits = code & 0x1f;
+            state.write_output(lower_bits.try_into().unwrap());
+
+            state.return_output()
+        }
+        0x100..=u32::MAX => Err(Error::Unimplemented),
     };
 
     d
@@ -595,7 +824,7 @@ fn unicode_to_zscii_bytes(config: &ZsciiConfig, state: &mut State, s: &str) -> Z
     ZCharacterString(bytes)
 }
 
-impl<const L: usize> ZsciiString<L> {
+impl<'config, const L: usize> ZsciiString<'config, L> {
     /// Create a new ZSCII string with a given character map
     ///
     /// # Examples
@@ -617,15 +846,11 @@ impl<const L: usize> ZsciiString<L> {
     /// assert_eq!(s.pop().unwrap(), 'a');
     /// assert_eq!(s.pop().unwrap(), 'b');
     /// ```
-    pub fn new_with_config(config: &ZsciiConfig, len: u32, data: [u8; L]) -> Self {
-        ZsciiString {
-            len,
-            data,
-            version: config.zmachine_version.unwrap(),
-        }
+    pub fn new_with_config(config: &'config ZsciiConfig, len: u32, data: [u8; L]) -> Self {
+        ZsciiString { config, len, data }
     }
 
-    /// Create a PetsciiString from a string slice
+    /// Create a ZSCII String from a string slice
     ///
     /// # Examples
     ///
@@ -649,7 +874,7 @@ impl<const L: usize> ZsciiString<L> {
     ///
     /// assert_eq!(s, lowercase);
     /// ```
-    pub fn from_str_with_config(config: &ZsciiConfig, s: &str) -> ZsciiString<L> {
+    pub fn from_str_with_config(config: &'config ZsciiConfig, s: &str) -> ZsciiString<'config, L> {
         let mut final_bytes: [u8; L] = [0; L];
 
         let mut state = State::new(config.zmachine_version.unwrap());
@@ -671,9 +896,9 @@ impl<const L: usize> ZsciiString<L> {
         final_bytes[..b.len()].copy_from_slice(&b[..b.len()]);
 
         ZsciiString {
+            config,
             len: b.len() as u32,
             data: final_bytes,
-            version: config.zmachine_version.unwrap(),
         }
     }
 }
@@ -684,9 +909,9 @@ impl<const L: usize> ZsciiString<L> {
 ///
 /// TODO: We may need to keep track of the end-of-text marker which is
 /// the most-significant bit in each 2-byte word
-pub struct IntoIter<const L: usize> {
+pub struct IntoIter<'config, const L: usize> {
     index: usize,
-    data: ZsciiString<L>,
+    data: ZsciiString<'config, L>,
     /// The MSB marker used to indicate end-of-text
     end_of_text_marker: bool,
     chars_to_send: Vec<u8>,
@@ -697,10 +922,10 @@ pub struct IntoIter<const L: usize> {
 //
 // This iterator will feed 5-bits at a time to the user.
 // It is then up to the other logic to decode those 5-bits
-impl<const L: usize> IntoIterator for ZsciiString<L> {
+impl<'config, const L: usize> IntoIterator for ZsciiString<'config, L> {
     type Item = u8;
-    type IntoIter = IntoIter<L>;
-    fn into_iter(self) -> IntoIter<L> {
+    type IntoIter = IntoIter<'config, L>;
+    fn into_iter(self) -> IntoIter<'config, L> {
         IntoIter {
             index: 0,
             data: self,
@@ -710,7 +935,7 @@ impl<const L: usize> IntoIterator for ZsciiString<L> {
     }
 }
 
-impl<const L: usize> IntoIter<L> {
+impl<const L: usize> IntoIter<'_, L> {
     fn get_next_words(&mut self) -> Vec<u8> {
         let first_byte = self.data.data[self.index];
         let second_byte = self.data.data[self.index + 1];
@@ -734,7 +959,7 @@ impl<const L: usize> IntoIter<L> {
 // Each ZSCII character code is a 5-bit value.
 // The iterator will feed 5-bits at a time to the user.
 // It's then up to the other logic to decode those 5-bits
-impl<const L: usize> Iterator for IntoIter<L> {
+impl<const L: usize> Iterator for IntoIter<'_, L> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
         // Check first_byte, because we want to return the whole three
@@ -957,16 +1182,14 @@ fn decode_char(state: &mut State, c: u8) -> Option<char> {
             match alphabet {
                 Alphabet::A0 => char::from_u32(
                     get_character(&alphabet, c)
-                        .unwrap_or_else(|_| {
-                            panic!("Should decode character: {:?} {}", &alphabet, c)
-                        })
+                        .unwrap_or_else(|_| panic!("Should decode character: {:?} {}", alphabet, c))
                         .into(),
                 ),
                 Alphabet::A1 => {
                     char::from_u32(
                         get_character(&alphabet, c)
                             .unwrap_or_else(|_| {
-                                panic!("Should decode character: {:?} {}", &alphabet, c)
+                                panic!("Should decode character: {:?} {}", alphabet, c)
                             })
                             .into(),
                     )
@@ -996,7 +1219,7 @@ fn decode_char(state: &mut State, c: u8) -> Option<char> {
             };
             char::from_u32(
                 get_character(&alphabet, c)
-                    .unwrap_or_else(|_| panic!("Should decode character: {:?} {}", &alphabet, c))
+                    .unwrap_or_else(|_| panic!("Should decode character: {:?} {}", alphabet, c))
                     .into(),
             )
         }
@@ -1006,7 +1229,7 @@ fn decode_char(state: &mut State, c: u8) -> Option<char> {
     d
 }
 
-impl<const L: usize> From<&ZsciiString<L>> for String {
+impl<const L: usize> From<&ZsciiString<'_, L>> for String {
     /// Create a String from a reference to a ZsciiString
     ///
     /// # Examples
@@ -1031,7 +1254,11 @@ impl<const L: usize> From<&ZsciiString<L>> for String {
     /// assert_eq!(s.pop().unwrap(), 't');
     /// ```
     fn from(s: &ZsciiString<L>) -> String {
-        let mut state = State::new(s.version);
+        let mut state = State::new(
+            s.config
+                .zmachine_version
+                .expect("The Z-Machine config should have a version"),
+        );
 
         s.into_iter()
             .filter_map(|c| {
@@ -1042,7 +1269,12 @@ impl<const L: usize> From<&ZsciiString<L>> for String {
                     // Start decoding a ten-bit ZSCII character
                     if let Some(high_bits) = state.ten_bit_zscii_word {
                         let ten_bit_zchar: u16 = ((high_bits << 5) | c).into();
-                        let decode_ten_bit_zchar_result = decode_ten_bit_zchar(ten_bit_zchar);
+                        let decode_ten_bit_zchar_result =
+                            decode_ten_bit_zchar(s.config, ten_bit_zchar);
+                        // Exit out of ten-bit ZSCII mode after
+                        // reading one ten-bit ZSCII character
+                        state.ten_bit_zscii_mode = false;
+
                         match decode_ten_bit_zchar_result {
                             Ok(r) => match r {
                                 Some(x) => char::from_u32(x.into()),
@@ -1064,7 +1296,7 @@ impl<const L: usize> From<&ZsciiString<L>> for String {
     }
 }
 
-impl<const L: usize> From<ZsciiString<L>> for String {
+impl<const L: usize> From<ZsciiString<'_, L>> for String {
     /// Create a String from a ZsciiString
     ///
     /// # Examples
@@ -1171,13 +1403,7 @@ mod tests {
 
     #[test]
     fn shift_up_works() {
-        let mut state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        let mut state = State::new(1);
 
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
@@ -1198,13 +1424,7 @@ mod tests {
         assert_eq!(state.shifted, ShiftState::Disabled);
 
         // Test temporary shift
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        let mut state = State::new(1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1213,13 +1433,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Up);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A1,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1228,13 +1442,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Up);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A2);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1246,13 +1454,7 @@ mod tests {
 
     #[test]
     fn shift_down_works() {
-        let mut state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        let mut state = State::new_with_version_and_alphabet(1, Alphabet::A2);
 
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
@@ -1273,13 +1475,7 @@ mod tests {
         assert_eq!(state.shifted, ShiftState::Disabled);
 
         // Test temporary shift
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A2);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1288,13 +1484,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Down);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A1,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1303,13 +1493,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Down);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new(1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1322,13 +1506,7 @@ mod tests {
     #[test]
     fn shift_works() {
         // Test shift up works
-        let mut state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        let mut state = State::new(1);
 
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
@@ -1349,13 +1527,7 @@ mod tests {
         assert_eq!(state.shifted, ShiftState::Disabled);
 
         // Test temporary shift
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new(1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1364,13 +1536,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Up);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A1,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1379,13 +1545,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Up);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A2);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1396,13 +1556,7 @@ mod tests {
 
         // Test shift down
 
-        let mut state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        let mut state = State::new_with_version_and_alphabet(1, Alphabet::A2);
 
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
@@ -1423,13 +1577,7 @@ mod tests {
         assert_eq!(state.shifted, ShiftState::Disabled);
 
         // Test temporary shift
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A2,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A2);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1438,13 +1586,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A2);
         assert_eq!(state.shifted, ShiftState::Down);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A1,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new_with_version_and_alphabet(1, Alphabet::A1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1453,13 +1595,7 @@ mod tests {
         assert_eq!(state.alphabet, Alphabet::A1);
         assert_eq!(state.shifted, ShiftState::Down);
 
-        state = State {
-            version: 1,
-            alphabet: Alphabet::A0,
-            shifted: ShiftState::Disabled,
-            ten_bit_zscii_mode: false,
-            ten_bit_zscii_word: None,
-        };
+        state = State::new(1);
         assert_eq!(state.version, 1);
         assert_eq!(state.alphabet, Alphabet::A0);
         assert_eq!(state.shifted, ShiftState::Disabled);
@@ -1551,7 +1687,7 @@ mod tests {
     #[test]
     fn zscii_version_1_from_unicode_lowercase_a_uppercase_a_works() {
         // "aA" is ASCII hex [0x61, 0x41], binary [0b01100001, 0b01000001]
-        // PETSCII: [0x06, 0x02, 0x06], binary: [0b00110, 0b00010, 0b00110]
+        // ZSCII: [0x06, 0x02, 0x06], binary: [0b00110, 0b00010, 0b00110]
         // Z-Characters: [0b10011000, 0b01000110], hex: [0x98, 0x46]
 
         let lowercase = "aA";
@@ -1575,7 +1711,7 @@ mod tests {
     #[test]
     fn zscii_version_1_from_unicode_uppercase_a_lowercase_a_works() {
         // "Aa" is ASCII hex [0x41, 0x61], binary [0b01000001, 0b01100001]
-        // PETSCII: [0x02, 0x06, 0x06], binary: [0b00010, 0b00110, 0b00110]
+        // ZSCII: [0x02, 0x06, 0x06], binary: [0b00010, 0b00110, 0b00110]
         // Z-Characters: [0b10001000, 0b11000110], hex: [0x88, 0xc6]
 
         let lowercase = "Aa";
@@ -1599,7 +1735,7 @@ mod tests {
     #[test]
     fn zscii_version_1_from_unicode_uppercase_a_uppercase_a_works() {
         // "AA" is ASCII hex [0x41, 0x41], binary [0b01000001, 0b01000001]
-        // PETSCII: [0x04, 0x06, 0x06], binary: [0b00100, 0b00110, 0b00110]
+        // ZSCII: [0x04, 0x06, 0x06], binary: [0b00100, 0b00110, 0b00110]
         // Z-Characters: [0b10010000, 0b11000110], hex: [0x90, 0xc6]
 
         let lowercase = "AA";
@@ -1626,7 +1762,7 @@ mod tests {
 
         // Z-Machine versions 3 and above only have temporary shift
         // (0x04 and 0x05)
-        // PETSCII: [0x06, 0x04, 0x06], binary: [0b00110, 0b00100, 0b00110]
+        // ZSCII: [0x06, 0x04, 0x06], binary: [0b00110, 0b00100, 0b00110]
 
         // Z-Characters: [0b10011000, 0b10000110], hex: [0x98, 0x86]
 
@@ -1654,7 +1790,7 @@ mod tests {
 
         // Z-Machine versions 3 and above only have temporary shift
         // (0x04 and 0x05)
-        // PETSCII: [0x04, 0x06, 0x06], binary: [0b00100, 0b00110, 0b00110]
+        // ZSCII: [0x04, 0x06, 0x06], binary: [0b00100, 0b00110, 0b00110]
 
         // Z-Characters: [0b10010000, 0b11000110], hex: [0x90, 0xc6]
 
@@ -1682,7 +1818,7 @@ mod tests {
         // Z-Machine versions 3 and above only have temporary shift
         // (0x04 and 0x05)
         // So we need two shift characters, extending it out to 4 Z-Characters
-        // PETSCII: [0x04, 0x06, 0x04, 0x06], binary: [0b00100, 0b00110, 0b00100, 0b00110]
+        // ZSCII: [0x04, 0x06, 0x04, 0x06], binary: [0b00100, 0b00110, 0b00100, 0b00110]
 
         // Z-Characters: binary: [0b00010000, 0b11000100, 0b10011000, 0b10100101],
         //               hex: [0x10, 0xc4, 0x98, 0xa5]
@@ -1785,7 +1921,7 @@ mod tests {
     fn zscii_version_1_short_unicode_to_alphabet_a2_works() {
         // "\r)" is ASCII hex [0x0d, 0x29], binary [0b00001101, 0b00101001]
         // Z-Machine versions 1 and above have permanent and temporary shift
-        // PETSCII: [0x05, 0x07, 0x1f], binary: [0b00101, 0b00111, 0b11111]
+        // ZSCII: [0x05, 0x07, 0x1f], binary: [0b00101, 0b00111, 0b11111]
         // Z-Characters: [0b10010100, 0b11111111], hex: [0x94, 0xff]
 
         let chars = "\r)";
@@ -1810,7 +1946,7 @@ mod tests {
     fn zscii_version_1_short_unicode_three_characters_to_alphabet_a2_works() {
         // "\r,)" is ASCII hex [0x0d, 0x2c, 0x29], binary [0b00001101, 0b00101100, 0b00101001]
         // Z-Machine versions 1 and above have permanent and temporary shift
-        // PETSCII: [0x05, 0x07, 0x13, 0x1f], binary: [0b00010, 0b00111, 0b10011, 0b11111]
+        // ZSCII: [0x05, 0x07, 0x13, 0x1f], binary: [0b00010, 0b00111, 0b10011, 0b11111]
         // Z-Characters: [0b00010100, 0b11110011, 0b11111100, 0b10100101]
         // Z-Characters: hex: [0x14, 0xf3, 0xfc, 0xa5]
 
@@ -1836,7 +1972,7 @@ mod tests {
     fn zscii_version_3_short_unicode_to_alphabet_a2_works() {
         // "\r)" is ASCII hex [0x0d, 0x29], binary [0b00001101, 0b00101001]
         // Z-Machine versions 3 and above only have temporary shift
-        // PETSCII: [0x05, 0x07, 0x05, 0x1f], binary: [0b00101, 0b00111, 0b00101, 0b11111]
+        // ZSCII: [0x05, 0x07, 0x05, 0x1f], binary: [0b00101, 0b00111, 0b00101, 0b11111]
         // Z-Characters: [0b00010100, 0b11100101, 0b11111100, 0b10100101]
         // Z-Characters: [0x14, 0xe5, 0xfc, 0xa5]
 
@@ -1903,5 +2039,111 @@ mod tests {
         let s: String = String::from(zs);
 
         assert_eq!(s, chars);
+    }
+
+    #[test]
+    fn zscii_version_1_unicode_to_zcharacters_default_translation_table_works() {
+        let chars = "ò";
+        let s: String = String::from(chars);
+
+        let expected: [u8; 4] = [0x0c, 0xc5, 0xe0, 0xa5];
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(1);
+
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+
+        assert_eq!(zs.len, 4);
+        assert_eq!(zs.data, expected);
+    }
+
+    #[test]
+    fn zscii_version_1_zcharacters_to_unicode_default_translation_table_works() {
+        let z_characters: [u8; 4] = [0x0c, 0xc5, 0xe0, 0xa5];
+
+        // let expected = "ò";
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(1);
+
+        let ps = ZsciiString::new_with_config(&zscii_config, 4, z_characters);
+
+        let s: String = String::from(ps);
+
+        assert_eq!(s.chars().count(), 1);
+        assert_eq!(s, 'ò'.to_string());
+    }
+
+    #[test]
+    fn zscii_version_3_unicode_to_zcharacters_default_translation_table_works() {
+        let chars = "ò";
+        let s: String = String::from(chars);
+
+        let expected: [u8; 4] = [0x14, 0xc5, 0xe0, 0xa5];
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(3);
+
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+
+        assert_eq!(zs.len, 4);
+        assert_eq!(zs.data, expected);
+    }
+
+    #[test]
+    fn zscii_version_3_zcharacters_to_unicode_default_translation_table_works() {
+        let z_characters: [u8; 4] = [0x14, 0xc5, 0xe0, 0xa5];
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(3);
+
+        let ps = ZsciiString::new_with_config(&zscii_config, 4, z_characters);
+
+        let s: String = String::from(ps);
+
+        assert_eq!(s.chars().count(), 1);
+        assert_eq!(s, 'ò'.to_string());
+    }
+
+    /// The Z-Machine Versions 1 and 2 support permanent shift
+    /// characters, so if there is a chain of more than one unicode
+    /// 10-bit character using the Unicode table we should use a
+    /// permanent shift.
+    /// We still need to include a ZSCII 6 character in A2 before
+    /// every character though.
+    #[test]
+    fn zscii_version_1_two_unicode_characters_to_zcharacters_default_translation_table_works() {
+        let chars = "òò";
+        let s: String = String::from(chars);
+
+        let expected: [u8; 6] = [0x14, 0xc5, 0x60, 0xc5, 0xe0, 0xa5];
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(1);
+
+        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s);
+
+        assert_eq!(zs.len, 6);
+        assert_eq!(zs.data, expected);
+    }
+
+    /// The Z-Machine Versions 3 and above don't have a permanent
+    /// shift character, so you need a separate shift before each
+    /// shifted character.  This includes Unicode from the translation
+    /// tables.
+    #[test]
+    fn zscii_version_3_two_unicode_characters_to_zcharacters_default_translation_table_works() {
+        let chars = "òò";
+        let s: String = String::from(chars);
+
+        let expected: [u8; 6] = [0x14, 0xc5, 0x60, 0xa6, 0x97, 0x5];
+
+        let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
+        zscii_config.zmachine_version = Some(3);
+
+        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s);
+
+        assert_eq!(zs.len, 6);
+        assert_eq!(zs.data, expected);
     }
 }
