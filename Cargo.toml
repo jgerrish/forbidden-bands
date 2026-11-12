@@ -1,13 +1,12 @@
 [package]
 name = "forbidden-bands"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Joshua Gerrish <jgerrish@gmail.com>"]
 description = "8-bit string handling library"
 keywords = ["8-bit", "unicode", "ascii", "string", "c64"]
 readme = "README.md"
 repository = "https://github.com/jgerrish/forbidden-bands"
-homepage = "https://github.com/jgerrish/forbidden-bands"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,6 +23,8 @@ external-json = []
 
 [dependencies]
 enumset = {version = "1.1", features = ["serde"] }
+rust-fsm = { version = "0.8" }
+rust-fsm-dsl = { version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 # serde = { version = "1.0", features = ["derive"], optional = true }

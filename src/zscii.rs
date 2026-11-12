@@ -31,6 +31,8 @@ use std::{
     sync::RwLock,
 };
 
+use rust_fsm::{state_machine, StateMachine};
+
 // See the notes about optional JSON support in the Cargo.toml file
 // #[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,200 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::Configuration;
+
+// rustfmt keeps trying to remove indentation for this rust-fsm-dsl
+// macro
+#[rustfmt::skip]
+state_machine! {
+    #[derive(Debug)]
+    #[repr(C)]
+    /// A ZSCII state machine.
+    zscii(V1A0P0TB0)
+
+    // It might be easier to make two seperate state machines,
+    // one for each version class.
+    V1A0P0TB0 => {
+	SingleUppercase => V1A1P0TB0 [TemporaryShiftUp],
+	MultiUppercase => V1A1P1TB0 [PermanentShiftUp],
+	SingleLowercase => V1A0P0TB0,
+	// TODO: Review
+	MultiLowercase => V1A0P0TB0,
+
+	SingleA2 => V1A2P0TB0 [TemporaryShiftDown],
+	MultiA2 => V1A2P1TB0 [PermanentShiftDown],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P0TB1 [TemporaryShiftDownTenBitShift],
+	MultiTenBitCharacter => V1A2P1TB1 [PermanentShiftDownTenBitShift],
+
+	// Consume a character
+	Character => V1A0P0TB0,
+    },
+    V1A0P1TB0 => {
+	SingleUppercase => V1A1P0TB0 [TemporaryShiftUp],
+	MultiUppercase => V1A1P1TB0 [PermanentShiftUp],
+	SingleLowercase => V1A0P1TB0,
+	// TODO: Review
+	MultiLowercase => V1A0P1TB0,
+
+	SingleA2 => V1A2P0TB0 [TemporaryShiftDown],
+	MultiA2 => V1A2P1TB0 [PermanentShiftDown],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P0TB1 [TemporaryShiftDownTenBitShift],
+	MultiTenBitCharacter => V1A2P1TB1 [PermanentShiftDownTenBitShift],
+
+	// Consume a character
+	Character => V1A0P1TB0,
+    },
+
+    V1A1P0TB0 => {
+	SingleUppercase => V1A0P0TB0,
+	// TODO: Review
+	MultiUppercase => V1A0P0TB0,
+	SingleLowercase => V1A0P0TB0 [TemporaryShiftDown],
+	MultiLowercase => V1A0P1TB0 [PermanentShiftDown],
+
+	SingleA2 => V1A2P0TB0 [TemporaryShiftUp],
+	MultiA2 => V1A2P1TB0 [PermanentShiftUp],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P0TB1 [TemporaryShiftUpTenBitShift],
+	MultiTenBitCharacter => V1A2P1TB1 [PermanentShiftUpTenBitShift],
+
+	// Consume a character
+	Character => V1A0P0TB0,
+    },
+    V1A1P1TB0 => {
+	SingleUppercase => V1A1P1TB0,
+	// TODO: Review
+	MultiUppercase => V1A1P1TB0,
+	SingleLowercase => V1A0P0TB0 [TemporaryShiftDown],
+	MultiLowercase => V1A0P1TB0 [PermanentShiftDown],
+
+	SingleA2 => V1A2P0TB0 [TemporaryShiftUp],
+	MultiA2 => V1A2P1TB0 [PermanentShiftUp],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P0TB1 [TemporaryShiftUpTenBitShift],
+	MultiTenBitCharacter => V1A2P1TB1 [PermanentShiftUpTenBitShift],
+
+	// Consume a character
+	Character => V1A1P1TB0,
+    },
+
+    V1A2P0TB0 => {
+	SingleUppercase => V1A1P0TB0 [TemporaryShiftDown],
+	MultiUppercase => V1A1P1TB0 [PermanentShiftDown],
+	SingleLowercase => V1A0P0TB0 [TemporaryShiftUp],
+	MultiLowercase => V1A0P1TB0 [PermanentShiftUp],
+
+	// Consume a character
+	Character => V1A0P0TB0,
+
+	SingleA2 => V1A2P0TB0,
+	// TODO: Review
+	MultiA2 => V1A2P0TB0,
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P0TB1 [TenBitShift],
+	MultiTenBitCharacter => V1A2P0TB1 [TenBitShift],
+
+    },
+    V1A2P0TB1 => {
+	// Consume a character
+	Character => V1A2P1TB0,
+    },
+    V1A2P1TB0 => {
+	SingleUppercase => V1A1P0TB0 [TemporaryShiftDown],
+	MultiUppercase => V1A1P1TB0 [PermanentShiftDown],
+	SingleLowercase => V1A0P0TB0 [TemporaryShiftUp],
+	MultiLowercase => V1A0P1TB0 [PermanentShiftUp],
+
+	// Consume a character
+	Character => V1A2P1TB0,
+
+	SingleA2 => V1A2P1TB0,
+	MultiA2 => V1A2P1TB0,
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V1A2P1TB1 [TenBitShift],
+	MultiTenBitCharacter => V1A2P1TB1 [TenBitShift],
+    },
+
+    V1A2P1TB1 => {
+	// Consume a character
+	Character => V1A2P1TB0,
+
+	// 	// six in state A2 enabled ten-bit mode
+	// 	SingleTenBitCharacter => V1A2P1TB1 [TenBitShift],
+	// 	MultiTenBitCharacter => V1A2P1TB1 [TenBitShift],
+    },
+
+    V3A0P0TB0 => {
+	SingleUppercase => V3A1P0TB0 [TemporaryShiftUp],
+	MultiUppercase => V3A1P0TB0 [TemporaryShiftUp],
+	SingleLowercase => V3A0P0TB0,
+	MultiLowercase => V3A0P0TB0,
+
+	SingleA2 => V3A2P0TB0 [TemporaryShiftDown],
+	MultiA2 => V3A2P0TB0 [TemporaryShiftDown],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V3A2P0TB1 [TemporaryShiftDownTenBitShift],
+	MultiTenBitCharacter => V3A2P0TB1 [TemporaryShiftDownTenBitShift],
+
+	// Consume a character
+	Character => V3A0P0TB0,
+    },
+
+    V3A1P0TB0 => {
+	SingleUppercase => V3A1P0TB0,
+	MultiUppercase => V3A1P0TB0,
+	SingleLowercase => V3A0P0TB0 [TemporaryShiftDown],
+	MultiLowercase => V3A0P0TB0 [TemporaryShiftDown],
+
+	SingleA2 => V3A2P0TB0 [TemporaryShiftUp],
+	MultiA2 => V3A2P0TB0 [TemporaryShiftUp],
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V3A2P0TB1 [TemporaryShiftUpTenBitShift],
+	MultiTenBitCharacter => V3A2P0TB1 [TemporaryShiftUpTenBitShift],
+
+	// Consume a character
+	Character => V3A0P0TB0,
+    },
+
+    V3A2P0TB0 => {
+	SingleUppercase => V3A1P0TB0 [TemporaryShiftDown],
+	MultiUppercase => V3A1P0TB0 [TemporaryShiftDown],
+	SingleLowercase => V3A1P0TB0 [TemporaryShiftUp],
+	MultiLowercase => V3A1P0TB0 [TemporaryShiftUp],
+
+	// Consume a character
+	Character => V3A0P0TB0,
+
+	SingleA2 => V3A2P0TB0,
+	MultiA2 => V3A2P0TB0,
+
+	// six in state A2 enabled ten-bit mode
+	SingleTenBitCharacter => V3A0P1TB1 [TenBitShift],
+	MultiTenBitCharacter => V3A0P1TB1 [TenBitShift],
+    },
+    V3A2P0TB1 => {
+	// Maybe this state should change as soon as we output 0x06, not
+	// the next character
+	// Consume a character
+	Character => V3A0P0TB0,
+    },
+
+    // Closed(Unsuccessful) => Open [SetupTimer],
+    // Open(TimerTriggered) => HalfOpen,
+    // HalfOpen => {
+    //     Successful => Closed,
+    //     Unsuccessful => Open [SetupTimer]
+    // }
+}
 
 /// A ZSCII string
 ///
@@ -67,15 +263,15 @@ pub struct ZsciiString<'config, const L: usize> {
     pub config: &'config ZsciiConfig,
 
     /// The length of the string
-    pub len: u32,
+    pub len: usize,
 
     /// The string data
     pub data: [u8; L],
 }
 
 /// The error types the Z-Machine can return
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Error {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Error {
     /// An invalid character code
     InvalidCharacter,
 
@@ -84,6 +280,25 @@ enum Error {
 
     /// There was no output vector to return
     NoOutput,
+
+    /// An invalid version of the Z-Machine was specified
+    InvalidVersion,
+
+    /// Generic error type
+    Message(String),
+}
+
+impl Error {
+    /// Create a new Error with a String message
+    pub fn new_with_message(msg: String) -> Self {
+        Error::Message(msg)
+    }
+}
+
+impl From<rust_fsm::TransitionImpossibleError> for Error {
+    fn from(_e: rust_fsm::TransitionImpossibleError) -> Self {
+        Error::Unimplemented
+    }
 }
 
 /// Configuration data including character maps for the ZSCII crate
@@ -176,6 +391,20 @@ impl ZsciiConfig {
         let zscii_config: ZsciiConfig = serde_json::from_value(char_set_map.clone())?;
 
         Ok(zscii_config)
+    }
+
+    /// Generate a rust-fsm ZSCII parser state machine from this
+    /// Z-Machine configuration
+    pub fn generate_state_machine(&self) -> Result<StateMachine<zscii::Impl>, Error> {
+        if let Some(version) = self.zmachine_version {
+            match version {
+                0 => Err(Error::InvalidVersion),
+                1..=2 => Ok(zscii::StateMachine::from_state(zscii::State::V1A0P0TB0)),
+                3..=u8::MAX => Ok(zscii::StateMachine::from_state(zscii::State::V3A0P0TB0)),
+            }
+        } else {
+            Err(Error::InvalidVersion)
+        }
     }
 }
 
@@ -363,6 +592,17 @@ impl State {
         self
     }
 
+    /// Shift to ten-bit ZSCII mode
+    /// Returns the new state with the changes applied
+    fn ten_bit_zscii_mode_shift(&mut self) -> &mut Self {
+        if let Some(ref mut o) = self.output {
+            o.push(0x06);
+        }
+        self.ten_bit_zscii_mode = true;
+
+        self
+    }
+
     /// Shift the alphabet in the current state up or down, either
     /// temporarily or permanently.
     /// Returns the new state with the changes applied
@@ -372,6 +612,42 @@ impl State {
             ShiftState::Disabled => self,
             ShiftState::Up => self.shift_up(shift_type),
             ShiftState::Down => self.shift_down(shift_type),
+        }
+    }
+
+    /// Given a state machine output entity, shift and output an
+    /// appropriate character
+    fn shift_from_state_machine_output(&mut self, output: Option<zscii::Output>) -> &mut Self {
+        if let Some(o) = output {
+            match o {
+                zscii::Output::TemporaryShiftDown => {
+                    self.shift(ShiftState::Down, ShiftType::Temporary)
+                }
+                zscii::Output::PermanentShiftDown => {
+                    self.shift(ShiftState::Down, ShiftType::Permanent)
+                }
+                zscii::Output::TemporaryShiftUp => self.shift(ShiftState::Up, ShiftType::Temporary),
+                zscii::Output::PermanentShiftUp => self.shift(ShiftState::Up, ShiftType::Permanent),
+                zscii::Output::TemporaryShiftDownTenBitShift => {
+                    self.shift(ShiftState::Down, ShiftType::Temporary);
+                    self.ten_bit_zscii_mode_shift()
+                }
+                zscii::Output::PermanentShiftDownTenBitShift => {
+                    self.shift(ShiftState::Down, ShiftType::Permanent);
+                    self.ten_bit_zscii_mode_shift()
+                }
+                zscii::Output::TemporaryShiftUpTenBitShift => {
+                    self.shift(ShiftState::Up, ShiftType::Temporary);
+                    self.ten_bit_zscii_mode_shift()
+                }
+                zscii::Output::PermanentShiftUpTenBitShift => {
+                    self.shift(ShiftState::Up, ShiftType::Permanent);
+                    self.ten_bit_zscii_mode_shift()
+                }
+                zscii::Output::TenBitShift => self.ten_bit_zscii_mode_shift(),
+            }
+        } else {
+            self
         }
     }
 }
@@ -487,8 +763,6 @@ fn decode_unicode_table_character(
     config: &ZsciiConfig,
     ten_bit_zchar: u16,
 ) -> Result<Option<u8>, Error> {
-    println!("Decoding ten-bit unicode table character");
-
     let extra_chars_map = &config.zscii_extra_characters_to_unicode_default_table;
 
     let key = ten_bit_zchar.to_string();
@@ -504,7 +778,7 @@ fn decode_unicode_table_character(
         }
     };
     let code_value_res = match code {
-        serde_json::Value::Number(v) => v.as_u64().unwrap() as u8,
+        serde_json::Value::Number(v) => v.as_u64().ok_or(Error::InvalidCharacter)? as u8,
         _ => {
             println!("serde_json convert ugh: {:?}", code);
             return Err(Error::InvalidCharacter);
@@ -517,70 +791,166 @@ fn decode_unicode_table_character(
 // Encoding functions from Unicode to ZSCII
 
 fn encode_alphabet_a2_char(
-    state: &mut State,
+    machine: &mut StateMachine<zscii::Impl>,
     config: &ZsciiConfig,
-    c: char,
+    state: &mut State,
     next_char: Option<char>,
+    c: char,
 ) -> Result<Option<Vec<u8>>, Error> {
-    let unicode_code_point = u32::from(c).to_string();
-
     // Unicode to Alphabet A2 characters
     let unicode_to_alphabet_a2 = &config.zscii_unicode_to_alphabet_a2;
-    let output: Vec<u8> = Vec::new();
 
-    state.set_output(output);
+    let unicode_code_point = u32::from(c).to_string();
 
     let res = unicode_to_alphabet_a2
         .get(&unicode_code_point)
         .map(|value| value.as_u64().unwrap() as u8);
 
     match res {
-        Some(r) => match state.version {
-            0 => Err(Error::Unimplemented),
-            1..=2 => {
-                let next_char_in_a2: bool = if let Some(next) = next_char {
-                    let next_unicode_code_point = u32::from(next).to_string();
-                    unicode_to_alphabet_a2.contains_key(&next_unicode_code_point)
-                } else {
-                    false
-                };
+        Some(r) => {
+            // This is slightly inefficient.
+            // We don't need to check this in version 3 and above
+            let mut input = zscii::Input::SingleA2;
+            if let Some(next) = next_char {
+                let next_unicode_code_point = u32::from(next).to_string();
+                input = zscii::Input::MultiA2;
+                unicode_to_alphabet_a2.contains_key(&next_unicode_code_point)
+            } else {
+                false
+            };
 
-                match state.alphabet {
-                    Alphabet::A0 => {
-                        if next_char_in_a2 {
-                            state.shift(ShiftState::Down, ShiftType::Permanent);
-                        } else {
-                            state.shift(ShiftState::Down, ShiftType::Temporary);
-                        }
-                    }
-                    Alphabet::A1 => {
-                        if next_char_in_a2 {
-                            state.shift(ShiftState::Up, ShiftType::Permanent);
-                        } else {
-                            state.shift(ShiftState::Up, ShiftType::Temporary);
-                        }
-                    }
-                    Alphabet::A2 => {}
-                }
-                state.write_output(r);
-                state.return_output()
-            }
-            3..=u8::MAX => {
-                // Version 3 of the Z-Machine only have temporary shifts
-                // They are normally in A0
-                state.shift(ShiftState::Down, ShiftType::Temporary);
-                state.write_output(r);
-                state.return_output()
-            }
-        },
+            let output = machine.consume(&input)?;
+
+            state.shift_from_state_machine_output(output);
+
+            state.write_output(r);
+
+            // TODO: proper error handling
+            let _output = machine.consume(&zscii::Input::Character);
+
+            state.return_output()
+        }
         None => Ok(None),
     }
 }
 
-// TODO: Reduce the complexity of this function by splitting it up
-// into smaller ones.  There's a lot of redundancy that can be reduced
-// here.
+fn encode_uppercase(
+    machine: &mut StateMachine<zscii::Impl>,
+    state: &mut State,
+    next_char: Option<char>,
+    unicode_code_point: u32,
+) -> Result<Option<Vec<u8>>, Error> {
+    let mut input = zscii::Input::SingleUppercase;
+    // This is slightly inefficient.
+    // We don't need to check this in version 3 and above
+    if let Some(next) = next_char {
+        let next_unicode_code_point = u32::from(next);
+        if (0x41..=0x5a).contains(&next_unicode_code_point) {
+            // Next character is also uppercase
+            input = zscii::Input::MultiUppercase;
+        }
+    }
+    let output = machine.consume(&input)?;
+
+    state.shift_from_state_machine_output(output);
+
+    state.write_output((unicode_code_point - 0x3b) as u8);
+
+    machine.consume(&zscii::Input::Character)?;
+
+    state.return_output()
+}
+
+fn encode_lowercase(
+    machine: &mut StateMachine<zscii::Impl>,
+    state: &mut State,
+    next_char: Option<char>,
+    unicode_code_point: u32,
+) -> Result<Option<Vec<u8>>, Error> {
+    let mut input = zscii::Input::SingleLowercase;
+    // This is slightly inefficient.
+    // We don't need to check this in version 3 and above
+    if let Some(next) = next_char {
+        let next_unicode_code_point = u32::from(next);
+        if (next_unicode_code_point >= 0x61) || (next_unicode_code_point <= 0x7a) {
+            // Next character is also lowercase
+            input = zscii::Input::MultiLowercase;
+        }
+    }
+    let output = machine.consume(&input)?;
+
+    state.shift_from_state_machine_output(output);
+
+    state.write_output((unicode_code_point - 0x5b) as u8);
+
+    machine.consume(&zscii::Input::Character)?;
+
+    state.return_output()
+}
+
+fn encode_unicode(
+    machine: &mut StateMachine<zscii::Impl>,
+    state: &mut State,
+    next_char: Option<char>,
+    unicode_code_point: u32,
+    uc_map: &Map<String, Value>,
+) -> Result<Option<Vec<u8>>, Error> {
+    let mut input = zscii::Input::SingleTenBitCharacter;
+
+    // This is slightly inefficient.
+    // We don't need to check this in version 3 and above
+    if let Some(next) = next_char {
+        let next_unicode_code_point = u32::from(next).to_string();
+        if uc_map.contains_key(&next_unicode_code_point) {
+            input = zscii::Input::MultiTenBitCharacter;
+        }
+    }
+    let output = machine.consume(&input)?;
+
+    state.shift_from_state_machine_output(output);
+
+    let key = unicode_code_point.to_string();
+    if !uc_map.contains_key(&key) {
+        println!("Couldn't find key: {:?}", key);
+        return Err(Error::InvalidCharacter);
+    }
+    let code_opt = uc_map.get(&key);
+    let code_value = match code_opt {
+        Some(s) => s,
+        None => {
+            println!("get failed't find key: {:?}", key);
+            return Err(Error::InvalidCharacter);
+        }
+    };
+
+    let code = match code_value {
+        serde_json::Value::Number(v) => v.as_u64().ok_or(Error::InvalidCharacter)? as u32,
+        _ => {
+            return Err(Error::InvalidCharacter);
+        }
+    };
+
+    // Top 5 bits flag:   0b1111100000
+    let top_bits = (code & 0x3e0) >> 5;
+    // Should implement From for the try_into errors
+    state.write_output(top_bits.try_into().map_err(|_e| Error::InvalidCharacter)?);
+    // lower 5 bits flag: 0b0000011111
+    let lower_bits = code & 0x1f;
+    // Should implement From for the try_into errors
+    state.write_output(
+        lower_bits
+            .try_into()
+            .map_err(|_e| Error::InvalidCharacter)?,
+    );
+
+    // TODO: proper error handling
+    machine.consume(&zscii::Input::Character)?;
+
+    state.return_output()
+}
+
 fn encode_char(
+    machine: &mut StateMachine<zscii::Impl>,
     config: &ZsciiConfig,
     state: &mut State,
     c: char,
@@ -590,233 +960,45 @@ fn encode_char(
 
     let mut output: Vec<u8> = Vec::new();
 
+    state.set_output(output);
+
     let uc_map = &config.zscii_unicode_to_extra_characters_default_table;
 
     // We should probably explicitly list these in the match cases
     // Mixing hash lookups and matches works but seems weird
-    let a2_option = encode_alphabet_a2_char(state, config, c, next_char)?;
+    let a2_option = encode_alphabet_a2_char(machine, config, state, next_char, c)?;
     if let Some(a2) = a2_option {
         output = a2;
         return Ok(Some(output));
     }
 
-    state.set_output(output);
-
-    let d = match unicode_code_point {
+    match unicode_code_point {
         0x00..=0x40 => Err(Error::Unimplemented),
-
         // Uppercase characters
-        0x41..=0x5a => match state.version {
-            0 => Err(Error::Unimplemented),
-            // Z-Machine Versions 1 and 2 have a permanent shift
-            // character
-            1..=2 => {
-                // We are already in the correct state
-                if state.alphabet == Alphabet::A1 {
-                    state.write_output((unicode_code_point - 0x3b) as u8);
-                    return state.return_output();
-                }
-
-                if let Some(next) = next_char {
-                    let next_unicode_code_point = u32::from(next);
-                    if (0x41..=0x5a).contains(&next_unicode_code_point) {
-                        // Next character is also uppercase
-                        // Use a permanent shift
-                        match state.alphabet {
-                            Alphabet::A0 => {
-                                state.shift(ShiftState::Up, ShiftType::Permanent);
-                            }
-                            Alphabet::A1 => {}
-                            Alphabet::A2 => {
-                                state.shift(ShiftState::Down, ShiftType::Permanent);
-                            }
-                        }
-                        state.write_output((unicode_code_point - 0x3b) as u8);
-                        return state.return_output();
-                    }
-                }
-
-                // Next character is not uppercase or doesn't exist, use a
-                // temporary shift
-                match state.alphabet {
-                    Alphabet::A0 => {
-                        state.shift(ShiftState::Up, ShiftType::Temporary);
-                    }
-                    Alphabet::A1 => {}
-                    Alphabet::A2 => {
-                        state.shift(ShiftState::Down, ShiftType::Temporary);
-                    }
-                }
-                state.write_output((unicode_code_point - 0x3b) as u8);
-                state.return_output()
-            }
-
-            // Z-Machine Versions 3 and above don't have a permanent
-            // shift character
-            3..=u8::MAX => {
-                // Shift to A1
-                state.shift(ShiftState::Up, ShiftType::Temporary);
-                state.write_output((unicode_code_point - 0x3b) as u8);
-                state.return_output()
-            }
-        },
+        0x41..=0x5a => encode_uppercase(machine, state, next_char, unicode_code_point),
         0x5b..=0x60 => Err(Error::Unimplemented),
         // lowercase characters
-        0x61..=0x7a => match state.version {
-            0 => Err(Error::Unimplemented),
-            // Z-Machine Versions 1 and 2 have a permanent shift
-            // character
-            1..=2 => {
-                // We are already in the correct state
-                if state.alphabet == Alphabet::A0 {
-                    state.write_output((unicode_code_point - 0x5b) as u8);
-                    return state.return_output();
-                }
-                if let Some(next) = next_char {
-                    let next_unicode_code_point = u32::from(next);
-                    if (next_unicode_code_point >= 0x61) || (next_unicode_code_point <= 0x7a) {
-                        // Next character is also lowercase
-                        // Use a permanent shift
-                        match state.alphabet {
-                            Alphabet::A0 => {}
-                            Alphabet::A1 => {
-                                state.shift(ShiftState::Down, ShiftType::Permanent);
-                            }
-                            Alphabet::A2 => {
-                                state.shift(ShiftState::Up, ShiftType::Permanent);
-                            }
-                        }
-                        state.write_output((unicode_code_point - 0x5b) as u8);
-                        return state.return_output();
-                    }
-
-                    // Next character is not lowercase or doesn't exist, use a
-                    // temporary shift
-                    match state.alphabet {
-                        Alphabet::A0 => {}
-                        Alphabet::A1 => {
-                            state.shift(ShiftState::Down, ShiftType::Temporary);
-                        }
-                        Alphabet::A2 => {
-                            state.shift(ShiftState::Up, ShiftType::Temporary);
-                        }
-                    }
-                }
-                state.write_output((unicode_code_point - 0x3b) as u8);
-                state.return_output()
-            }
-            3..=u8::MAX => {
-                // normal state is A0
-                state.write_output((unicode_code_point - 0x5b) as u8);
-                state.return_output()
-            }
-        },
+        0x61..=0x7a => encode_lowercase(machine, state, next_char, unicode_code_point),
         0x7b..=0x9f => Err(Error::Unimplemented),
-        0xa0..=0xff => {
-            // Shift first
-            if !state.ten_bit_zscii_mode {
-                // We need to be in alphabet A2 to enable ten bit ZSCII mode
-                if state.alphabet == Alphabet::A2 {
-                    // Just switch to ten bit ZSCII mode
-                    state.write_output(0x06);
-                } else {
-                    // I know this is a state machine.  I'm reducing
-                    // the complexity and refactoring input/output
-                    // into state transitions gradually.
-                    //
-                    // We now output shift state transitions, and
-                    // we'll do ten-bit transitions next.
-                    match state.version {
-                        0 => return Err(Error::Unimplemented),
-                        // Z-Machine Versions 1 and 2 have a permanent shift
-                        // character
-                        1..=2 => {
-                            let next_char_in_a2: bool = if let Some(next) = next_char {
-                                let next_unicode_code_point = u32::from(next).to_string();
-                                uc_map.contains_key(&next_unicode_code_point)
-                            } else {
-                                false
-                            };
-                            println!("Next character is in a2");
-                            // Next character is not uppercase or doesn't exist, use a
-                            // temporary shift
-                            match state.alphabet {
-                                Alphabet::A0 => {
-                                    if next_char_in_a2 {
-                                        state.shift(ShiftState::Down, ShiftType::Permanent);
-                                    } else {
-                                        state.shift(ShiftState::Down, ShiftType::Temporary);
-                                    }
-                                }
-                                Alphabet::A1 => {
-                                    if next_char_in_a2 {
-                                        state.shift(ShiftState::Up, ShiftType::Permanent);
-                                    } else {
-                                        state.shift(ShiftState::Up, ShiftType::Temporary);
-                                    }
-                                }
-                                Alphabet::A2 => {
-                                    println!("Already in A2");
-                                }
-                            }
-                        }
-                        // Z-Machine Versions 3 and above don't have a permanent
-                        // shift character
-                        3..=u8::MAX => {
-                            // Shift to A2
-                            state.shift(ShiftState::Down, ShiftType::Temporary);
-                        }
-                    }
-                    // Maybe add specific method for changing ten-byte
-                    // state
-                    state.write_output(0x06);
-                }
-            }
-            println!("test");
-            let key = unicode_code_point.to_string();
-            println!("test2");
-            if !uc_map.contains_key(&key) {
-                println!("Couldn't find key: {:?}", key);
-                return Err(Error::InvalidCharacter);
-            }
-            let code_opt = uc_map.get(&key);
-            let code_value = match code_opt {
-                Some(s) => s,
-                None => {
-                    println!("get failed't find key: {:?}", key);
-                    return Err(Error::InvalidCharacter);
-                }
-            };
-
-            let code = match code_value {
-                serde_json::Value::Number(v) => v.as_u64().unwrap() as u32,
-                _ => {
-                    return Err(Error::InvalidCharacter);
-                }
-            };
-
-            // Top 5 bits flag:   0b1111100000
-            let top_bits = (code & 0x3e0) >> 5;
-            state.write_output(top_bits.try_into().unwrap());
-            // lower 5 bits flag: 0b0000011111
-            let lower_bits = code & 0x1f;
-            state.write_output(lower_bits.try_into().unwrap());
-
-            state.return_output()
-        }
+        0xa0..=0xff => encode_unicode(machine, state, next_char, unicode_code_point, uc_map),
         0x100..=u32::MAX => Err(Error::Unimplemented),
-    };
-
-    d
+    }
 }
 
-fn unicode_to_zscii_bytes(config: &ZsciiConfig, state: &mut State, s: &str) -> ZCharacterString {
+fn unicode_to_zscii_bytes(
+    machine: &mut StateMachine<zscii::Impl>,
+    config: &ZsciiConfig,
+    state: &mut State,
+    s: &str,
+) -> ZCharacterString {
+    // Initialize the state machine. The default alphabet is `A0`.
     let bytes: Vec<u8> = s
         .chars()
         .enumerate()
         .filter_map(|(idx, c)| {
             let chars_opt: Option<Vec<u8>> =
-                encode_char(config, state, c, s.chars().nth(idx + 1)).expect("Should be Ok result");
+                encode_char(machine, config, state, c, s.chars().nth(idx + 1))
+                    .expect("Should be Ok result");
             chars_opt
         })
         .flatten()
@@ -840,13 +1022,11 @@ impl<'config, const L: usize> ZsciiString<'config, L> {
     /// config.zmachine_version = Some(3);
     ///
     /// let ps = ZsciiString::new_with_config(&config, 2, [0x1c, 0xd9]);
-    /// let mut s: String = String::from(ps);
+    /// let s: String = String::from(ps);
     ///
-    /// assert_eq!(s.pop().unwrap(), 't');
-    /// assert_eq!(s.pop().unwrap(), 'a');
-    /// assert_eq!(s.pop().unwrap(), 'b');
+    /// assert_eq!(s.to_string(), "bat")
     /// ```
-    pub fn new_with_config(config: &'config ZsciiConfig, len: u32, data: [u8; L]) -> Self {
+    pub fn new_with_config(config: &'config ZsciiConfig, len: usize, data: [u8; L]) -> Self {
         ZsciiString { config, len, data }
     }
 
@@ -865,21 +1045,31 @@ impl<'config, const L: usize> ZsciiString<'config, L> {
     /// let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
     /// zscii_config.zmachine_version = Some(1);
     ///
-    /// let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+    /// let zs_res = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
     ///
-    /// assert_eq!(zs.len, 2);
-    /// assert_eq!(zs.data, expected);
+    /// if let Ok(zs) = zs_res {
+    ///     assert_eq!(zs.len, 2);
+    ///     assert_eq!(zs.data, expected);
     ///
-    /// let s: String = String::from(zs);
+    ///     let s: String = String::from(zs);
     ///
-    /// assert_eq!(s, lowercase);
+    ///     assert_eq!(s, lowercase);
+    /// } else {
+    ///     assert!(false);
+    /// }
+    ///
     /// ```
-    pub fn from_str_with_config(config: &'config ZsciiConfig, s: &str) -> ZsciiString<'config, L> {
+    pub fn from_str_with_config(
+        config: &'config ZsciiConfig,
+        s: &str,
+    ) -> Result<ZsciiString<'config, L>, Error> {
         let mut final_bytes: [u8; L] = [0; L];
 
-        let mut state = State::new(config.zmachine_version.unwrap());
+        let mut state = State::new(config.zmachine_version.ok_or(Error::InvalidVersion)?);
 
-        let bytes: ZCharacterString = unicode_to_zscii_bytes(config, &mut state, s);
+        let mut machine = config.generate_state_machine()?;
+
+        let bytes: ZCharacterString = unicode_to_zscii_bytes(&mut machine, config, &mut state, s);
 
         let mut zcharacter_bytes: Vec<u8> = Vec::new();
 
@@ -889,17 +1079,19 @@ impl<'config, const L: usize> ZsciiString<'config, L> {
         });
 
         if zcharacter_bytes.len() > L {
-            panic!("u8 vector is too large");
+            return Err(Error::new_with_message(String::from(
+                "u8 vector is too large",
+            )));
         }
         let b = zcharacter_bytes.as_slice();
 
         final_bytes[..b.len()].copy_from_slice(&b[..b.len()]);
 
-        ZsciiString {
+        Ok(ZsciiString {
             config,
-            len: b.len() as u32,
+            len: b.len(),
             data: final_bytes,
-        }
+        })
     }
 }
 
@@ -967,7 +1159,7 @@ impl<const L: usize> Iterator for IntoIter<'_, L> {
         if self.chars_to_send.is_empty() {
             // if self.end_of_text_marker && self.first_byte() {
             // 	return None;
-            if self.index < (self.data.len).try_into().unwrap() {
+            if self.index < self.data.len {
                 let mut words: Vec<u8> = self.get_next_words();
                 self.chars_to_send.append(&mut words);
                 self.index += 2;
@@ -1245,13 +1437,9 @@ impl<const L: usize> From<&ZsciiString<'_, L>> for String {
     /// config.zmachine_version = Some(3);
     ///
     /// let ps = ZsciiString::new_with_config(&config, 4, [0x65, 0xae, 0xa9, 0x65]);
-    /// let mut s: String = String::from(ps);
+    /// let s: String = String::from(ps);
     ///
-    /// assert_eq!(s.pop().unwrap(), 'f');
-    /// assert_eq!(s.pop().unwrap(), 'e');
-    /// assert_eq!(s.pop().unwrap(), 'i');
-    /// assert_eq!(s.pop().unwrap(), 'h');
-    /// assert_eq!(s.pop().unwrap(), 't');
+    /// assert_eq!(s.to_string(), "thief");
     /// ```
     fn from(s: &ZsciiString<L>) -> String {
         let mut state = State::new(
@@ -1312,13 +1500,9 @@ impl<const L: usize> From<ZsciiString<'_, L>> for String {
     /// config.zmachine_version = Some(3);
     ///
     /// let ps = ZsciiString::new_with_config(&config, 4, [0x65, 0xae, 0xa9, 0x65]);
-    /// let mut s: String = String::from(ps);
+    /// let s: String = String::from(ps);
     ///
-    /// assert_eq!(s.pop().unwrap(), 'f');
-    /// assert_eq!(s.pop().unwrap(), 'e');
-    /// assert_eq!(s.pop().unwrap(), 'i');
-    /// assert_eq!(s.pop().unwrap(), 'h');
-    /// assert_eq!(s.pop().unwrap(), 't');
+    /// assert_eq!(s.to_string(), "thief");
     /// ```
     fn from(s: ZsciiString<L>) -> String {
         String::from(&s)
@@ -1652,14 +1836,10 @@ mod tests {
         zscii_config.zmachine_version = Some(3);
         let ps = ZsciiString::new_with_config(&zscii_config, 4, [0x65, 0xae, 0xa9, 0x65]);
 
-        let mut s: String = String::from(ps);
+        let s: String = String::from(ps);
 
         assert_eq!(s.len(), 5);
-        assert_eq!(s.pop().unwrap(), 'f');
-        assert_eq!(s.pop().unwrap(), 'e');
-        assert_eq!(s.pop().unwrap(), 'i');
-        assert_eq!(s.pop().unwrap(), 'h');
-        assert_eq!(s.pop().unwrap(), 't');
+        assert_eq!(s.to_string(), "thief");
     }
 
     // Tests for encoding from Unicode to ZSCII and Z-characters
@@ -1674,7 +1854,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -1698,7 +1878,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1722,7 +1902,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1746,7 +1926,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1774,7 +1954,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1802,7 +1982,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1831,7 +2011,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -1854,7 +2034,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 18);
         assert_eq!(zs.data, expected);
@@ -1880,7 +2060,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 18);
         assert_eq!(zs.data, expected);
@@ -1907,7 +2087,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<36>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<36>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 36);
         assert_eq!(zs.data, expected);
@@ -1932,7 +2112,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<2>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 2);
         assert_eq!(zs.data, expected);
@@ -1958,7 +2138,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -1984,7 +2164,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -2007,7 +2187,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<18>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 18);
         assert_eq!(zs.data, expected);
@@ -2031,7 +2211,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<34>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<34>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 34);
         assert_eq!(zs.data, expected);
@@ -2051,7 +2231,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -2084,7 +2264,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<4>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 4);
         assert_eq!(zs.data, expected);
@@ -2121,7 +2301,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(1);
 
-        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 6);
         assert_eq!(zs.data, expected);
@@ -2141,7 +2321,7 @@ mod tests {
         let mut zscii_config = ZsciiConfig::load().expect("Error loading config");
         zscii_config.zmachine_version = Some(3);
 
-        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s);
+        let zs = ZsciiString::<6>::from_str_with_config(&zscii_config, &s).unwrap();
 
         assert_eq!(zs.len, 6);
         assert_eq!(zs.data, expected);
